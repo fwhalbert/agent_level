@@ -29,20 +29,20 @@ def load_project_evals(project_dir):
         if not store.is_dir():
             continue
         if any(path.is_symlink() for path in (store, store.parent, store.parent.parent)):
-            raise ValueError('自动采集目录不能使用符号链接')
+            raise ValueError('Auto-discovery directories must not be symbolic links')
         for path in sorted(store.glob('*/results.json')):
             if path.is_symlink() or path.parent.is_symlink() or not path.is_file():
-                raise ValueError('自动采集台账须为普通文件，不能使用符号链接')
+                raise ValueError('Auto-discovered task records must be regular files, not symbolic links')
             if path.stat().st_size > MAX_EVIDENCE_BYTES:
-                raise ValueError('自动采集台账超过 16 MiB')
+                raise ValueError('Auto-discovered task record exceeds 16 MiB')
             ledger = load_evals(path)
             if ledger.get('collector') != 'daily-v1' or len(ledger['tasks']) != 1:
-                raise ValueError('自动发现目录中的台账必须是 daily-v1 格式的单任务记录')
+                raise ValueError('Auto-discovered task records must be single-task daily-v1 records')
             selected = []
             for task in ledger['tasks']:
                 if (not isinstance(task, dict) or not isinstance(task.get('repo'), str)
                         or not Path(task['repo']).is_absolute() or task.get('evaluation_mode') != 'daily'):
-                    raise ValueError('自动采集台账缺少可辨识的任务 repo')
+                    raise ValueError('Auto-discovered task record has no identifiable task repo')
                 if project_matches(task['repo'], project):
                     selected.append(task)
             if not selected:

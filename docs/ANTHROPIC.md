@@ -34,11 +34,13 @@ The evaluator is read-only and never executes commands from imported files. Evid
 
 ## Existing sessions and daily activity
 
+Install and activate the workspace venv as shown in the [quick start](../README.md#quick-start). The examples below use `agent-level-assess` from that environment.
+
 To review existing Claude/Codex work without defining new tasks:
 
 ```bash
-python3 assess.py --project-dir ~/codes/dot_ws -o reports/dot-ws-history/report
-python3 assess.py --project-dir ~/codes/dot_ws/src/mag --days 30
+agent-level-assess --project-dir /path/to/workspace -o reports/workspace-history/report
+agent-level-assess --project-dir /path/to/workspace/repos/example-project --days 30
 ```
 
 Project matching uses log `cwd` in the selected directory and descendants. It excludes similarly named siblings and diagnoses records with no working directory; it does not guess from transcript text. Codex updates the directory at `turn_context`; Claude uses the recorded directory and carries it forward within a file. Project mode skips the global Claude stats cache and automatic current-directory self-report config. It finds `.codex/agent-eval/tasks/*/results.json` and `.claude/agent-eval/tasks/*/results.json` in the project or ancestors, filters by task `repo`, and checks local evidence. `--no-auto-evals` keeps only log analysis. `--eval-results` cannot be combined with project mode, preventing accidental import of another project's task data.
@@ -55,9 +57,9 @@ These are historical signals, not retroactive acceptance tasks. A session end do
 ## Read-only usage
 
 ```bash
-python3 assess.py
-python3 assess.py --eval-results ./evidence/results.json --evidence-root ./evidence
-python3 assess.py --eval-results ./evidence/results.json --eval-k 5 --days 30
+agent-level-assess
+agent-level-assess --eval-results ./evidence/results.json --evidence-root ./evidence
+agent-level-assess --eval-results ./evidence/results.json --eval-k 5 --days 30
 ```
 
 Import without `--evidence-root` is marked unchecked. With it, each trial's files, hashes, grader content, and artifact links are checked; mismatches become unknown. This is not an independent audit. `--config` affects only L0–L7 and cannot supply task outcomes. Import also works without local session directories; L0–L7 then shows Unknown.
@@ -76,6 +78,7 @@ Protocol 1.0 and tasks without a mode are interpreted as `controlled`, retaining
 | `source` | `claude` or `codex` |
 | `suite_id`, `suite_version` | Nonempty strings; update version when tasks or graders change |
 | `model`, `harness_version` | Nonempty actual runtime conditions; distinct conditions cannot form repeats |
+| `reasoning_effort` | Actual effort, such as `xhigh` or `high`; daily recorder writes `unknown` if omitted. Legacy records without this field use a documented official model default when known, otherwise `unknown`. An explicit `unknown` is retained. |
 | `task_id` | Nonempty ID unique within source, mode, and evaluation conditions |
 | `acceptance_criteria` | Success criteria defined before execution |
 | `reference_solution_ref` | Required in controlled mode; optional in daily mode |
@@ -106,11 +109,11 @@ Local checking accepts these evidence files. All references are relative to the 
 - `task_outcome`: `kind`, `artifact_id`, boolean `passed`, and `graders: [{"grader_id": "…", "sha256": "…"}]`, matching the trial's grader order and hashes.
 - Execution trace: `transcript_ref` and `transcript_sha256`.
 
-An absent result may use `passed: null` and counts as unknown; do not mark it successful or failed. Tasks run through an agent or external workflow. The separate `agent_level_record.py` can register daily tasks and execute predefined acceptance commands, as described in [AUTO_EVALUATION.md](AUTO_EVALUATION.md). The evaluator itself runs no imported commands.
+An absent result may use `passed: null` and counts as unknown; do not mark it successful or failed. Tasks run through an agent or external workflow. The separate `agent-level-record` command can register daily tasks and execute predefined acceptance commands, as described in [AGENTS.md](../AGENTS.md). The evaluator itself runs no imported commands.
 
 ## Isolation, missing data, and date windows
 
-- Group by `(evaluation_mode, source, suite_id, suite_version, model, harness_version)`; distinguish tasks by `task_id` within a group. No mixed-system average is published.
+- Group by `(evaluation_mode, source, suite_id, suite_version, model, harness_version, reasoning_effort)`; distinguish tasks by `task_id` within a group. No mixed-system average is published. `--model` and `--effort` filter imported task records and comparisons; they do not filter the historical-log L0–L7 assessment.
 - Identical duplicate tasks/trials are deduplicated. A conflicting trial becomes unknown; a conflicting task cannot be scored. Other valid results remain.
 - Records with unidentifiable identity are diagnosed separately and do not enter known group denominators. A complete group does not imply the entire input has no missing records.
 - An incomplete group retains four outcome counts, grading coverage, graded pass rate, and planned success bounds, but does not publish complete-group acceptance or repeat probabilities.

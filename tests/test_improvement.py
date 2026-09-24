@@ -116,6 +116,15 @@ class TestImprovement(TempCase):
         trials[1]['outcome'] = copy.deepcopy(trials[0]['outcome'])
         self.assertEqual(self.run_eval(data)['reason'], 'incomplete_or_incomparable_trials')
 
+    def test_comparison_cannot_mix_reasoning_efforts(self):
+        data = self.fixture()
+        data['improvement_comparisons'][0]['reasoning_effort'] = 'high'
+        for task in data['tasks']:
+            task['reasoning_effort'] = 'high'
+        self.assertEqual(self.run_eval(data)['status'], 'supported_gain')
+        data['tasks'][5]['reasoning_effort'] = 'medium'
+        self.assertEqual(self.run_eval(data)['reason'], 'task_set_mismatch')
+
     def test_regressions_not_supported(self):
         row = self.run_eval(self.fixture(regress_last=True))
         self.assertEqual(row['status'], 'gain_with_regressions')

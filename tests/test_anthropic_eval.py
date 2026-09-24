@@ -5,7 +5,7 @@ import json
 import re
 
 import assess as A
-from assessment.anthropic import assess
+from assessment.anthropic import assess, filter_evals, render_summary, task_effort
 from assessment.logs import Metrics, merge_metrics, parse_date
 from tests.test_assessment_core import TempCase, message
 
@@ -79,6 +79,18 @@ class TestAnthropic(TempCase):
                 self.assertEqual(r['counts']['graded_trials'], 7)
                 self.assertIsNone(r['groups'][0]['pass_at_1'])
 
+    def test_text_report_explains_interrupted_daily_trial(self):
+        t = task((True,), evaluation_mode='daily')
+        t['trials'][0]['status'] = 'interrupted'
+        t['trials'][0]['graders'] = []
+        del t['trials'][0]['outcome']
+        report = assess(Metrics(), data(t))
+        summary = render_summary(report)
+        self.assertEqual(report['failure_reasons'], {'execution_incomplete': 1})
+        self.assertIn('Execution incomplete / interrupted: 1', summary)
+        self.assertIn('One acceptance run per daily task; pass@k / pass^k are not calculated', summary)
+        self.assertNotIn('pass@1=Insufficient evidence', summary)
+
     def test_missing_entire_planned_trial_or_task_trials_cannot_inflate_scores(self):
         for trials in ([], task()['trials'][:3]):
             t = task()
@@ -148,6 +160,33 @@ class TestAnthropic(TempCase):
         self.assertTrue(all(g['pass_at_k'] is None for g in r['groups']))
         self.assertEqual(assess(Metrics('codex'), data(*tasks))['counts']['tasks'], 1)
 
+    def test_legacy_effort_uses_documented_model_default_only(self):
+        sol = task((True,), source='codex')
+        sol['model'] = 'GPT-6-Sol'
+        opus = task((True,), source='claude')
+        opus['model'] = 'Opus 5.5 (1M context)'
+        self.assertEqual(task_effort(sol), 'medium')
+        self.assertEqual(task_effort(opus), 'medium')
+        self.assertEqual(task_effort(task()), 'unknown')
+        opus['reasoning_effort'] = 'high'
+        self.assertEqual(task_effort(opus), 'high')
+        sol['reasoning_effort'] = 'unknown'
+        self.assertEqual(task_effort(sol), 'unknown')
+
+    def test_effort_separates_groups_and_filters_legacy_records(self):
+        legacy = task((True,), source='codex')
+        legacy['model'] = 'gpt-6-sol'
+        high = copy.deepcopy(legacy)
+        high['reasoning_effort'] = 'xhigh'
+        combined = data(legacy, high)
+        report = assess(Metrics('codex'), combined)
+        self.assertEqual(report['counts']['tasks'], 2)
+        self.assertEqual(len(report['groups']), 2)
+        medium = filter_evals(combined, model='GPT-6-SOL', effort='MEDIUM')
+        self.assertEqual(assess(Metrics('codex'), medium)['counts']['tasks'], 1)
+        self.assertEqual(assess(Metrics('codex'), filter_evals(combined, effort='xhigh'))
+                         ['counts']['tasks'], 1)
+
     def test_time_window_cannot_turn_partial_task_into_complete_task(self):
         t = task()
         t['trials'][0]['timestamp'] = '2026-09-09T23:59:00Z'
@@ -211,7 +250,9 @@ class TestAnthropic(TempCase):
         path = self.root / 'evals.json'
         for invalid in ('not json', '[]', '{"schema_version":"wrong","tasks":[]}'):
             path.write_text(invalid)
-            self.assertEqual(self.cli(['--eval-results', str(path), '--format', 'json'])[0], 2)
+            rc, _, error = self.cli(['--eval-results', str(path), '--format', 'json'])
+            self.assertEqual(rc, 2)
+            self.assertNotRegex(error, r'[\u4e00-\u9fff]')
         self.assertEqual(self.cli(['--eval-k', '0', '--format', 'json'])[0], 2)
         self.assertEqual(self.cli(['--eval-results', str(self.root / 'absent'), '--format', 'json'])[0], 2)
 
@@ -221,10 +262,11 @@ class TestAnthropic(TempCase):
                                  '--format', 'html', '--no-auto-config'])
         self.assertEqual(rc, 0)
         self.assertIn('id="assessment-method"', output)
-        self.assertEqual(output.count('data-method-view="anthropic"'), 6)
-        self.assertEqual(output.count('data-method-view="levels"'), 6)
+        self.assertEqual(output.count('data-method-view="anthropic"'), 3)
+        self.assertEqual(output.count('data-method-view="levels"'), 3)
+        self.assertEqual(output.count('data-method-view="improvement"'), 3)
         self.assertIn('value="both"', output)
-        self.assertIn('参考论文与官方文档', output)
-        self.assertIn('证据不足', output)
+        self.assertIn('Research and official references', output)
+        self.assertIn('Insufficient evidence', output)
         self.assertNotIn('src="https://', output)
         self.assertNotIn('fetch(', output)

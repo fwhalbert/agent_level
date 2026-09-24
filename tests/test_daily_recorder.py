@@ -1,4 +1,5 @@
 import contextlib
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -25,10 +26,12 @@ class TestDailyRecorder(TempCase):
             code = recorder.main(args)
         return code, output.getvalue().strip(), error.getvalue()
 
-    def start(self, command=None, source='codex', timeout=10):
+    def start(self, command=None, source='codex', timeout=10, model='test-model', effort=None):
         args = ['start', '--repo', str(self.repo), '--workspace', str(self.workspace),
-                '--source', source, '--model', 'test-model', '--criteria', 'Run the specified check',
+                '--source', source, '--model', model, '--criteria', 'Run the specified check',
                 '--timeout', str(timeout)]
+        if effort is not None:
+            args += ['--reasoning-effort', effort]
         if command is not None:
             args += ['--'] + command
         code, output, error = self.invoke(args)
@@ -58,6 +61,18 @@ class TestDailyRecorder(TempCase):
                 self.assertIsNone(report['groups'][0]['pass_at_k'])
         _, counts = self.assessment()
         self.assertEqual(counts, {'files': 2, 'tasks': 2})
+
+    def test_model_and_effort_are_separate_recorded_conditions(self):
+        directory = self.start([sys.executable, '-c', 'print("checked")'],
+                               model='GPT-6-Sol', effort='xhigh')
+        task = json.loads((directory / 'results.json').read_text())['tasks'][0]
+        self.assertEqual((task['model'], task['reasoning_effort']), ('GPT-6-Sol', 'xhigh'))
+        self.assertEqual(self.finish(directory)[0], 0)
+        task = json.loads((directory / 'results.json').read_text())['tasks'][0]
+        self.assertEqual((task['model'], task['reasoning_effort']), ('GPT-6-Sol', 'xhigh'))
+        legacy_default = self.start(model='unidentified-model')
+        self.assertEqual(json.loads((legacy_default / 'results.json').read_text())['tasks'][0]
+                         ['reasoning_effort'], 'unknown')
 
     def test_registered_and_unverifiable_work_stays_unknown(self):
         directory = self.start()
@@ -110,6 +125,72 @@ class TestDailyRecorder(TempCase):
         self.assertFalse((directory / 'check.log').exists())
         self.assertEqual(self.assessment()[0]['counts']['unknown_trials'], 1)
 
+    def test_tampered_or_missing_output_is_unknown(self):
+        directory = self.start([sys.executable, '-c', 'print("checked")'])
+        self.assertEqual(self.finish(directory)[0], 0)
+        output = directory / 'check.log'
+        output.write_text('changed output')
+        for missing in (False, True):
+            with self.subTest(missing=missing):
+                if missing:
+                    output.unlink()
+                report, _ = self.assessment()
+                self.assertEqual(report['counts']['verified_trials'], 0)
+                self.assertEqual(report['counts']['successful_trials'], 0)
+                self.assertEqual(report['counts']['unknown_trials'], 1)
+
+    def test_rehashed_journal_must_match_grader_and_artifact(self):
+        directory = self.start([sys.executable, '-c', 'print("checked")'])
+        self.assertEqual(self.finish(directory)[0], 0)
+        journal_path = directory / 'journal.json'
+        original = json.loads(journal_path.read_text())
+        ledger_path = directory / 'results.json'
+        ledger = json.loads(ledger_path.read_text())
+        for change in ({'exit_code': 1}, {'exit_code': False}, {'task_id': 'different'},
+                       {'timed_out': True}, {'error': 'interrupted'}, {'output_ref': '../outside'}):
+            with self.subTest(change=change):
+                journal_path.write_text(json.dumps(dict(original, **change)))
+                ledger['tasks'][0]['trials'][0]['transcript_sha256'] = hashlib.sha256(journal_path.read_bytes()).hexdigest()
+                ledger_path.write_text(json.dumps(ledger))
+                report, _ = self.assessment()
+                self.assertEqual(report['counts']['verified_trials'], 0)
+                self.assertEqual(report['counts']['unknown_trials'], 1)
+
+    def test_output_limit_stops_command_and_bounds_file(self):
+        limit = 8192
+        directory = self.start([sys.executable, '-c',
+                                'import os, time; '
+                                'os.write(1, b"x" * 65536); time.sleep(30)'], timeout=3)
+        with patch.object(recorder, 'MAX_EVIDENCE_BYTES', limit):
+            code, result, _ = self.finish(directory)
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(result)['error'], 'acceptance output exceeds evidence size limit')
+        self.assertEqual((directory / 'check.log').stat().st_size, limit)
+        self.assertEqual(self.assessment()[0]['counts']['unknown_trials'], 1)
+
+    def test_exact_output_limit_and_closed_stdout_are_supported(self):
+        directory = self.start([sys.executable, '-c',
+                                'import os; os.write(1, b"x" * 8192); os.close(1); os.close(2)'])
+        with patch.object(recorder, 'MAX_EVIDENCE_BYTES', 8192):
+            self.assertEqual(self.finish(directory)[0], 0)
+        self.assertEqual(self.assessment()[0]['counts']['verified_trials'], 1)
+
+    def test_closed_stdout_does_not_bypass_timeout(self):
+        directory = self.start([sys.executable, '-c',
+                                'import os, time; os.close(1); os.close(2); time.sleep(30)'], timeout=.1)
+        code, result, _ = self.finish(directory)
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(result)['error'], 'acceptance timed out')
+
+    def test_descendant_holding_stdout_does_not_bypass_timeout(self):
+        directory = self.start([sys.executable, '-c',
+                                'import os, time; '
+                                'pid = os.fork(); '
+                                'time.sleep(30) if pid == 0 else None'], timeout=.1)
+        code, result, _ = self.finish(directory)
+        self.assertEqual(code, 2)
+        self.assertEqual(json.loads(result)['error'], 'acceptance timed out')
+
     def test_record_store_cannot_be_a_symlink(self):
         (self.workspace / '.codex').symlink_to(self.root, target_is_directory=True)
         code, _, error = self.invoke(['start', '--repo', str(self.repo), '--workspace', str(self.workspace),
@@ -129,6 +210,7 @@ class TestDailyRecorder(TempCase):
         base = ['start', '--repo', str(self.repo), '--source', 'codex', '--model', 'test', '--criteria', 'test']
         for value in ('nan', 'inf', '-1', '0'):
             self.assertEqual(self.invoke(base + ['--timeout', value])[0], 2)
+        self.assertEqual(self.invoke(base + ['--reasoning-effort', ' '])[0], 2)
         other = self.root / 'other'
         other.mkdir()
         self.assertEqual(self.invoke(base + ['--workspace', str(other)])[0], 2)
@@ -136,15 +218,15 @@ class TestDailyRecorder(TempCase):
 
     def test_keyboard_interrupt_preserves_unknown_evidence(self):
         directory = self.start([sys.executable, '-c', 'import time; time.sleep(30)'])
-        original = recorder.subprocess.Popen.wait
+        original = recorder.selectors.DefaultSelector.select
         calls = []
 
-        def interrupted(process, *args, **kwargs):
+        def interrupted(selector, *args, **kwargs):
             calls.append(1)
             if len(calls) == 1:
                 raise KeyboardInterrupt
-            return original(process, *args, **kwargs)
+            return original(selector, *args, **kwargs)
 
-        with patch.object(recorder.subprocess.Popen, 'wait', interrupted):
+        with patch.object(recorder.selectors.DefaultSelector, 'select', interrupted):
             self.assertEqual(self.finish(directory)[0], 2)
         self.assertEqual(self.assessment()[0]['counts']['unknown_trials'], 1)

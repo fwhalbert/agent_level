@@ -1,31 +1,31 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-assess.py — AI Engineering Assessment 本地评估器
+assess.py — Local AI Engineering Assessment
 
-配套规范: AI_ENGINEERING_LEVELS_L0-L7.md
+Specification: docs/AGENT_LEVEL_L0-L7.md
 
-读取:
+Reads:
     <claude-dir>/projects/**/*.jsonl
     <claude-dir>/stats-cache.json
     <codex-dir>/sessions/**/*.jsonl
     <codex-dir>/archived_sessions/**/*.jsonl
-    ai-level-evidence.json            (L5+ 高阶能力证据, 可选)
+    ai-level-evidence.json            (optional self-reported L5+ evidence)
 
-不读取: .credentials.json / .env / SSH key / API key
-不输出: prompt 原文 / 源代码 / Bash 命令原文 / tool 参数 / 文件内容
-        —— 本脚本只输出聚合统计数字与判定结果。
+Does not read: .credentials.json / .env / SSH key / API key
+Omits: raw prompts / source code / raw shell commands / tool arguments / file contents
+        Only aggregate statistics and assessment results are reported.
 
-用法:
-    python3 assess.py
-    python3 assess.py --source claude
-    python3 assess.py --source codex
-    python3 assess.py --format txt+html
-    python3 assess.py --format md
-    python3 assess.py --format json -o -
-    python3 assess.py --init-config
-    python3 assess.py --config ai-level-evidence.json
-    python3 assess.py --since 2026-09-01 --until 2026-09-20
+Usage (after installing and activating the venv):
+    agent-level-assess
+    agent-level-assess --source claude
+    agent-level-assess --source codex
+    agent-level-assess --format txt+html
+    agent-level-assess --format md
+    agent-level-assess --format json -o -
+    agent-level-assess --init-config
+    agent-level-assess --config ai-level-evidence.json
+    agent-level-assess --since 2026-09-01 --until 2026-09-20
 """
 
 from __future__ import annotations
@@ -36,6 +36,7 @@ import math
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -45,7 +46,7 @@ from assessment.logs import (
     HUMAN_FILTER_RULES, DELEGATION_TOOLS, usage_breakdown,
 )
 
-from assessment.anthropic import assess as assess_anthropic, load_evals, render_summary
+from assessment.anthropic import assess as assess_anthropic, filter_evals, load_evals, render_summary
 from assessment.improvement import assess as assess_improvement, render_summary as render_improvement
 from assessment.references import REFERENCES, METHOD_NOTE
 from assessment.evidence import EvidenceReader
@@ -58,6 +59,23 @@ DEFAULT_REPORT_NAME = "AI Engineering Assessment"
 def report_stem(name: str) -> str:
     """Turn a display name into a safe, readable filename stem."""
     return re.sub(r"[^\w-]+", "-", name, flags=re.UNICODE).strip("-_ ").lower()
+
+
+def show_progress(message: str) -> None:
+    print(f"[progress] {message}", file=sys.stderr, flush=True)
+
+
+def scan_progress(source: str):
+    last_update = time.monotonic()
+
+    def update(file_number):
+        nonlocal last_update
+        now = time.monotonic()
+        if now - last_update >= 2:
+            show_progress(f"{source}: processing log file {file_number}…")
+            last_update = now
+
+    return update
 
 LEVEL_NAMES = {
     None: "Insufficient evidence",
@@ -86,10 +104,10 @@ L3_MIN_TOOL_PER_HUMAN = 3.0
 L4_MIN_ENGINEERING_SESSIONS = 3
 L4_MIN_ENGINEERING_DAYS = 2
 
-# §4 L5 门槛
+# L5 thresholds (specification section 4)
 L5_MAX_INTERVENTIONS_PER_TASK = 1.0
 
-# L5 / L6 / L7 证据键 (顺序即报告顺序)
+# L5 / L6 / L7 evidence keys, in report order
 L5_FLAGS = [
     ("persistent_task_pickup", "Persistent task pickup"),
     ("autonomous_pr", "Autonomous PR"),
@@ -112,12 +130,12 @@ L7_FLAGS = [
 ]
 
 # --------------------------------------------------------------------------
-# 证据配置 (ai-level-evidence.json)
+# Evidence configuration (ai-level-evidence.json)
 # --------------------------------------------------------------------------
 
 DEFAULT_CONFIG = {
     "_about": "L5–L7 self-reported evidence, not independently verified. In multi-source runs, top-level fields apply only to the combined view; put source-specific evidence under sources.claude or sources.codex.",
-    "_docs": "AI_ENGINEERING_LEVELS_L0-L7.md",
+    "_docs": "docs/AGENT_LEVEL_L0-L7.md",
     "l5": {
         "persistent_task_pickup": False,
         "autonomous_pr": False,
@@ -145,7 +163,7 @@ ALL_FLAG_KEYS = (
 
 
 def load_config(path: Path | None, scope=None, allow_legacy=False) -> dict:
-    """扁平化证据配置; 支持 {"l5":{...}} 嵌套或全部平铺两种写法。"""
+    """Flatten evidence from nested level groups or a flat mapping."""
     flat = {k: (None if k == L5_NUMERIC[0] else False) for k in ALL_FLAG_KEYS}
     if path is None:
         return flat
@@ -197,13 +215,13 @@ def init_config(path: Path, force: bool) -> int:
     path.write_text(json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False) + "\n",
                     encoding="utf-8")
     print(f"[ok] wrote {path}")
-    print("     编辑其中的证据字段后运行: "
+    print("     Edit the evidence fields, then run: "
           f"python3 {Path(sys.argv[0]).name} --config {path.name}")
     return 0
 
 
 # --------------------------------------------------------------------------
-# 判定 (§4, 累积 Gate)
+# Assessment with cumulative gates (specification section 4)
 # --------------------------------------------------------------------------
 
 class Check:
@@ -260,19 +278,19 @@ def evaluate(m: Metrics, cfg: dict) -> dict:
     gaps = [c for c in gates.get(next_level, []) if not c.ok] if next_level != current else []
     note = None
     if current is None:
-        note = "数据不足；没有日志不代表 L0。L0 需要人工确认没有 AI 工程执行。"
+        note = "Insufficient data. Missing logs do not imply L0; L0 requires human confirmation that AI did not perform engineering work."
     elif current == 1:
-        note = "仅观察到辅助/调查行为，无法仅凭这些日志区分 L0 与 L1。"
+        note = "Only assistance or investigation was observed; these logs alone cannot distinguish L0 from L1."
     elif current == 2:
-        note = "观察到代码修改，尚无足够样本支持 L3；不据此判断人的能力。"
+        note = "Code edits were observed, but the sample does not support L3; this is not a judgment of human ability."
     return {"gates": gates, "status": status, "current": current,
             "observed_level": observed, "next": next_level, "gaps": gaps,
             "below_note": note, "basis": "self-reported" if current and current >= 5 else "observed",
             "limitations": [
-                "L0–L7 是本项目的经验模型，不是行业认证或生产力排名。",
-                "L3/L4 为日志行为候选等级；修改后运行构建/测试不证明通过或任务完成。",
-                "L5–L7 仅为自报证据，需结合任务结果、评测记录和人工审计核验。",
-                "消息与工具封装因客户端而异，assistant/human 与委派数量不作为硬门槛。",
+                "L0–L7 are project heuristics, not an industry certification or productivity ranking.",
+                "L3/L4 are candidate levels based on log behavior; running a build/test after an edit does not prove it passed or that the task was completed.",
+                "L5–L7 rely on self-reported evidence and need task outcomes, evaluations, and human audit.",
+                "Message and tool formats vary by client; assistant/human and delegation counts are not hard thresholds.",
             ]}
 
 
@@ -281,7 +299,7 @@ def level_label(level):
 
 
 # --------------------------------------------------------------------------
-# 输出 (§9)
+# Report output (specification section 9)
 # --------------------------------------------------------------------------
 
 def window_str(m: Metrics, since, until):
@@ -301,15 +319,25 @@ def render_report(report, markdown=False):
     anthropic = report['anthropic_evaluation']
     lines = [heading(report.get('report_name', DEFAULT_REPORT_NAME)), '',
              f"Current Level : {level_label(level)}  {report['current_level_name']}",
-             f"Anthropic    : {anthropic['status_label']}（不设 L0–L7 等级）",
+             f"Anthropic    : {anthropic['status_label']} (no L0–L7 level)",
              f"Next Target  : {level_label(report['next_target'])}",
              f"Source       : {report['source']}",
              f"Window       : {report['window']} (UTC)",
              f"Basis        : {report['assessment_basis']}"]
     if report['project_filter']['enabled']:
-        lines.append('项目范围：已限定项目目录及其子目录（按日志 cwd）。')
+        lines.append('Project scope: project directory and descendants only (based on log cwd).')
+    task_filters = report.get('task_filters', {})
+    if any(task_filters.values()):
+        lines.append('Task evidence filter: ' + ' · '.join(
+            f'{label}={task_filters[key]}' for key, label in
+            (('model', 'model'), ('reasoning_effort', 'effort')) if task_filters.get(key))
+            + ' (does not change the historical L0–L7 level)')
     if report['note']:
         lines.append(report['note'])
+    visibility = report.get('level_visibility', {})
+    if visibility.get('may_undercount_edits_and_verification'):
+        lines.append(f"Code orchestration calls {visibility['opaque_orchestrator_calls']} have no visible nested tool trace. "
+                     "Log levels may undercount edits and verification. See the Anthropic evaluation for task acceptance results.")
     observed = report['observed']
     lines.extend(['', heading('Observed')])
     for label, key in [('Human inputs', 'humanish_user'), ('Tool calls', 'tool_calls'),
@@ -345,7 +373,8 @@ def render_md(m: Metrics, res: dict, since, until, cfg_path) -> str:
 
 
 def build_report(m: Metrics, res: dict, since, until, cfg_path,
-                 report_name=DEFAULT_REPORT_NAME) -> dict:
+                 report_name=DEFAULT_REPORT_NAME, task_filters=None) -> dict:
+    opaque_calls = m.diagnostics['opaque_orchestrator_calls']
     return {
         "version": VERSION,
         "report_name": report_name,
@@ -353,7 +382,13 @@ def build_report(m: Metrics, res: dict, since, until, cfg_path,
         "source": m.source,
         "sources": sorted(m.sources),
         "assessment_basis": res["basis"],
+        "level_visibility": {
+            "status": "partial" if opaque_calls else "direct",
+            "opaque_orchestrator_calls": opaque_calls,
+            "may_undercount_edits_and_verification": bool(opaque_calls),
+        },
         "project_filter": {"enabled": m.project_filtered, "includes_descendants": m.project_filtered},
+        "task_filters": task_filters or {"model": None, "reasoning_effort": None},
         "observed_level": res["observed_level"],
         "limitations": res["limitations"],
         "note": res["below_note"],
@@ -373,7 +408,7 @@ def build_report(m: Metrics, res: dict, since, until, cfg_path,
         "current_level_name": LEVEL_NAMES[res["current"]],
         "next_target": res["next"],
         "long_target": 7,
-        "long_target_note": "L7 是特定研究方向，不是所有工程团队的升级目标。",
+        "long_target_note": "L7 is a specialized research direction, not an upgrade target for every engineering team.",
         "evidence_config": cfg_path,
         "scope": {
             "files_scanned": m.files_scanned,
@@ -450,28 +485,31 @@ def build_parser():
     p.add_argument("--claude-dir", default=os.environ.get("CLAUDE_DIR", "~/.claude"))
     p.add_argument("--codex-dir", default=os.environ.get("CODEX_HOME", "~/.codex"))
     p.add_argument("--project-dir", type=Path,
-                   help="只分析此项目目录及子目录的历史会话，按日志 cwd 筛选；不执行任务")
+                   help="Analyze historical sessions in this project and its subdirectories using log cwd; does not run tasks")
     p.add_argument("--config")
     p.add_argument("--eval-results", type=Path,
-                   help="可选任务评测结果 JSON，可含 improvement_comparisons；不执行引用的文件")
+                   help="Optional task evaluation JSON, possibly containing improvement_comparisons; does not run referenced files")
     p.add_argument("--evidence-root", type=Path,
-                   help="显式核验此目录内的本地证据哈希、评分和产物关联；需 --eval-results")
+                   help="Verify local evidence hashes, scores, and artifact links in this directory; requires --eval-results")
     p.add_argument("--eval-k", type=int, default=3,
-                   help="pass@k / pass^k 的 k，默认 3；这是统计参数，不是官方门槛")
+                   help="k for pass@k / pass^k; default 3; a statistical parameter, not an official threshold")
+    p.add_argument("--model", help="Filter task evaluation records by model (not historical L0-L7 logs)")
+    p.add_argument("--reasoning-effort", "--effort", dest="reasoning_effort",
+                   help="Filter task evaluation records by effort; legacy missing values use documented model defaults")
     p.add_argument("--no-auto-config", action="store_true")
     p.add_argument("--no-auto-evals", action="store_true",
-                   help="项目模式下仅分析历史日志，不读取 .codex/agent-eval/tasks/*/results.json 或 .claude/agent-eval/tasks/*/results.json")
+                   help="In project mode, analyze historical logs without reading task evaluation records")
     p.add_argument("--init-config", nargs="?", const="ai-level-evidence.json")
     p.add_argument("--force", action="store_true")
     p.add_argument("--format", choices=("txt+html", "txt", "text", "md", "json", "html"),
-                   default="txt+html", help="默认 txt+html，同时生成文本和网页报告；text 是 txt 的别名")
+                   default="html", help="Default html (one file); txt+html writes both; text is an alias for txt")
     p.add_argument("--report-name", "--name", default=DEFAULT_REPORT_NAME,
-                   help="报告标题；未指定 -o 时也用于生成文件名")
+                   help="Report title and, without -o, the output filename")
     p.add_argument("--output", "-o", type=Path,
-                   help="输出路径，默认 reports/YYYY-MM-DD/<报告名>.<格式>（本地日期）；双格式替换后缀；单格式可用 - 输出到 stdout")
-    p.add_argument("--since", metavar="YYYY-MM-DD", help="UTC 起始日期，含当天")
-    p.add_argument("--until", metavar="YYYY-MM-DD", help="UTC 结束日期，含当天")
-    p.add_argument("--days", type=int, metavar="N", help="最近 N 个 UTC 日历日，含今天")
+                   help="Output path; default out/agent_level/YYYY-MM-DD/<report-name>.<format> (local date); dual format replaces suffix; - writes one format to stdout")
+    p.add_argument("--since", metavar="YYYY-MM-DD", help="First UTC date, inclusive")
+    p.add_argument("--until", metavar="YYYY-MM-DD", help="Last UTC date, inclusive")
+    p.add_argument("--days", type=int, metavar="N", help="Last N UTC calendar days, including today")
     p.add_argument("--version", action="version", version=VERSION)
     return p
 
@@ -513,17 +551,21 @@ def main(argv=None) -> int:
         return 2
     project_dir = args.project_dir.expanduser().resolve() if args.project_dir else None
     if project_dir is not None and not project_dir.is_dir():
-        print('[error] --project-dir 必须是已有目录', file=sys.stderr)
+        print('[error] --project-dir must be an existing directory', file=sys.stderr)
         return 2
     if project_dir is not None and args.eval_results is not None:
-        print('[error] --project-dir 用于历史日志；任务导入尚不支持按项目筛选，请单独运行 --eval-results', file=sys.stderr)
+        print('[error] --project-dir filters historical logs; task imports cannot be filtered by project; run --eval-results separately', file=sys.stderr)
         return 2
     cfg_path = Path(args.config).expanduser() if args.config else None
     if args.eval_k < 1:
         print("[error] --eval-k must be >= 1", file=sys.stderr)
         return 2
+    if any(value is not None and not value.strip() for value in (args.model, args.reasoning_effort)):
+        print('[error] --model and --effort must not be empty', file=sys.stderr)
+        return 2
     discovery = {'enabled': project_dir is not None and not args.no_auto_evals, 'files': 0, 'tasks': 0}
     try:
+        show_progress("Reading task evaluation records…")
         eval_data = load_evals(args.eval_results.expanduser() if args.eval_results else None)
         if args.evidence_root and args.eval_results is None:
             raise ValueError("--evidence-root requires --eval-results")
@@ -532,9 +574,12 @@ def main(argv=None) -> int:
             from assessment.collection import load_project_evals
             eval_data, evidence_reader, counts = load_project_evals(project_dir)
             discovery.update(counts)
+        eval_data = filter_evals(eval_data, args.model, args.reasoning_effort)
     except (ValueError, OSError) as exc:
         print(f"[error] {exc}", file=sys.stderr)
         return 2
+    if discovery['enabled']:
+        show_progress(f"Found {discovery['files']} project task records covering {discovery['tasks']} tasks")
     if cfg_path is None and project_dir is None and not args.no_auto_config and Path("ai-level-evidence.json").is_file():
         cfg_path = Path("ai-level-evidence.json")
     sources = ("claude", "codex") if args.source == "all" else (args.source,)
@@ -549,7 +594,14 @@ def main(argv=None) -> int:
             if args.source != "all":
                 return 2
             continue
-        collected[source] = (scan if source == "claude" else scan_codex)(root, since, until, project_dir=project_dir)
+        show_progress(f"Scanning {source} session logs…")
+        started = time.monotonic()
+        collected[source] = (scan if source == "claude" else scan_codex)(
+            root, since, until, project_dir=project_dir, progress=scan_progress(source))
+        metrics = collected[source]
+        show_progress(f"{source} scan complete: {metrics.files_scanned} files, "
+                      f"{metrics.files_with_data} with data in the selected range, "
+                      f"{time.monotonic() - started:.1f} seconds")
     if not collected:
         print("[error] no data directories found", file=sys.stderr)
         return 2
@@ -560,26 +612,30 @@ def main(argv=None) -> int:
         selected.update(collected)
     reports = {}
     shown_cfg = cfg_path.name if cfg_path else None
+    task_filters = {'model': args.model, 'reasoning_effort': args.reasoning_effort}
     for name, metrics in selected.items():
+        show_progress(f"Calculating {name} assessment…")
         config = load_config(cfg_path, scope=name, allow_legacy=args.source != "all")
         result = evaluate(metrics, config)
         result['anthropic_evaluation'] = assess_anthropic(metrics, eval_data, since, until, args.eval_k, evidence_reader)
         result['self_improvement_evaluation'] = assess_improvement(
             eval_data, evidence_reader, metrics.sources, since, until)
-        reports[name] = build_report(metrics, result, since, until, shown_cfg, report_name)
+        reports[name] = build_report(metrics, result, since, until, shown_cfg, report_name, task_filters)
     download_stem = args.output.stem if args.output and args.output != Path("-") else stem
     bundle = {"version": VERSION, "ruleset_version": RULESET_VERSION,
               "view": args.view, "report_name": report_name,
               "report_file_stem": download_stem, "reports": reports,
               "project_task_records": discovery,
+              "task_filters": task_filters,
               "evaluation_methods": ["level_assessment_l0_l7", "anthropic_evals", "self_improvement_comparison"],
               "references": REFERENCES, "method_note": METHOD_NOTE,
-              "merge_note": "合并计数后重算比值，活跃日期取并集；不会拼接跨来源的修改/验证链，也不推断跨来源任务去重。"}
+              "merge_note": "Counts are merged before ratios are recalculated, and active dates are unioned. Edit/verification chains are not joined across sources, and cross-source tasks are not deduplicated."}
     output_base = args.output or (
-        Path("reports") / datetime.now().strftime("%Y-%m-%d") / stem
+        Path("out") / "agent_level" / datetime.now().strftime("%Y-%m-%d") / stem
     )
     try:
         for fmt in formats:
+            show_progress(f"Generating {fmt.upper()} report…")
             if fmt == "html":
                 from assessment.web import render_html
                 out = render_html(bundle)
@@ -605,10 +661,22 @@ def main(argv=None) -> int:
     return 0
 
 
-if __name__ == "__main__":
+def cli(argv=None):
     try:
-        sys.exit(main())
+        return main(argv)
     except BrokenPipeError:
         os._exit(0)
     except KeyboardInterrupt:
-        sys.exit(130)
+        return 130
+
+
+def project_cli():
+    argv = sys.argv[1:]
+    if not any(arg in ("--project-dir", "--eval-results") or
+               arg.startswith(("--project-dir=", "--eval-results=")) for arg in argv):
+        argv = ["--project-dir", str(Path.cwd()), *argv]
+    return cli(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(cli())

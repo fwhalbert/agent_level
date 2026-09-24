@@ -17,7 +17,8 @@ class TestProjectEvidence(TempCase):
         self.repo = self.workspace / 'src' / 'repo'
         self.repo.mkdir(parents=True)
 
-    def record(self, name='one', repo=None, passed=True, source='codex'):
+    def record(self, name='one', repo=None, passed=True, source='codex',
+               model=None, effort=None):
         directory = self.workspace / f'.{source}' / 'agent-eval' / 'tasks' / name
         directory.mkdir(parents=True)
 
@@ -28,6 +29,10 @@ class TestProjectEvidence(TempCase):
 
         definition = task((passed,), source=source, task_id=name,
                           evaluation_mode='daily', repo=str(repo or self.repo))
+        if model is not None:
+            definition['model'] = model
+        if effort is not None:
+            definition['reasoning_effort'] = effort
         trial = definition['trials'][0]
         trial['artifact_id'] = name
         trial['transcript_ref'], trial['transcript_sha256'] = artifact('trace.json', 'PRIVATE_TRANSCRIPT')
@@ -70,7 +75,7 @@ class TestProjectEvidence(TempCase):
                     self.assertEqual(result['anthropic_evaluation']['counts']['verified_trials'], 1)
                 else:
                     self.assertIn('Anthropic', output)
-                    self.assertIn('已有任务结果', output)
+                    self.assertIn('Task results available', output)
 
     def test_ancestor_discovery_filters_repo_and_uses_individual_evidence_roots(self):
         self.record()
@@ -96,6 +101,24 @@ class TestProjectEvidence(TempCase):
                 self.assertEqual(report['counts']['verified_trials'], 1)
                 self.assertEqual(report['counts']['successful_trials'], successes)
                 self.assertEqual(report['counts']['failed_trials'], failures)
+
+    def test_cli_filters_task_records_by_model_and_effort(self):
+        self.record('legacy', model='gpt-6-sol')
+        self.record('high', passed=False, model='gpt-6-sol', effort='xhigh')
+        self.record('other', model='gpt-6-luna', effort='medium')
+        args = ['--project-dir', str(self.workspace), '--source', 'codex',
+                '--codex-dir', str(self.root / 'missing-codex'), '--format', 'json']
+        code, output, error = self.cli(args + ['--model', 'GPT-6-SOL', '--effort', 'medium'])
+        self.assertEqual(code, 0, error)
+        bundle = json.loads(output)
+        self.assertEqual(bundle['reports']['codex']['anthropic_evaluation']['counts']['tasks'], 1)
+        self.assertEqual(bundle['reports']['codex']['anthropic_evaluation']['counts']['successful_trials'], 1)
+        self.assertEqual(bundle['task_filters'], {'model': 'GPT-6-SOL', 'reasoning_effort': 'medium'})
+        self.assertEqual(bundle['project_task_records']['tasks'], 3)
+        code, output, error = self.cli(args + ['--effort', 'xhigh'])
+        self.assertEqual(code, 0, error)
+        self.assertEqual(json.loads(output)['reports']['codex']['anthropic_evaluation']['counts']
+                         ['failed_trials'], 1)
 
     def test_tampered_evidence_only_invalidates_affected_task(self):
         record = self.record()
@@ -138,7 +161,9 @@ class TestProjectEvidence(TempCase):
         record.write_text('invalid JSON')
         args = ['--project-dir', str(self.workspace), '--source', 'claude',
                 '--claude-dir', str(self.root), '--format', 'json']
-        self.assertEqual(self.cli(args)[0], 2)
+        code, _, error = self.cli(args)
+        self.assertEqual(code, 2)
+        self.assertNotRegex(error, r'[\u4e00-\u9fff]')
         code, output, error = self.cli(args + ['--no-auto-evals'])
         self.assertEqual(code, 0, error)
         self.assertFalse(json.loads(output)['project_task_records']['enabled'])

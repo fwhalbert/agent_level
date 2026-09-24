@@ -82,10 +82,19 @@ class EvidenceReader:
     def verify_trial(self, trial):
         """Check hashes, command/JUnit verdicts and artifact association."""
         try:
-            self.read(trial.get('transcript_ref'), trial.get('transcript_sha256'))
+            transcript = self.read(trial.get('transcript_ref'), trial.get('transcript_sha256'))
             artifact = trial.get('artifact_id')
             if not isinstance(artifact, str) or not artifact:
                 raise ValueError('missing_artifact_identity')
+            journal = None
+            if trial.get('transcript_kind') == 'collector_journal':
+                journal = json.loads(transcript)
+                if (not isinstance(journal, dict) or journal.get('kind') != 'collector_journal'
+                        or journal.get('task_id') != artifact
+                        or type(journal.get('exit_code')) is not int or journal['exit_code'] < 0
+                        or journal.get('timed_out') is not False or journal.get('error') is not None):
+                    raise ValueError('invalid_collector_journal')
+                self.read(journal.get('output_ref'), journal.get('output_sha256'))
             for grader in trial.get('graders', []):
                 raw = self.read(grader.get('evidence_ref'), grader.get('evidence_sha256'))
                 if grader.get('type') != 'code':
@@ -96,6 +105,8 @@ class EvidenceReader:
                 code = result.get('exit_code')
                 if type(code) is not int or code < 0 or result.get('timed_out') is not False:
                     raise ValueError('command_incomplete')
+                if journal is not None and code != journal['exit_code']:
+                    raise ValueError('journal_grader_mismatch')
                 passed = code == 0
                 junit = result.get('junit')
                 if junit is not None:

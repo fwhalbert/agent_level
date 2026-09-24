@@ -27,7 +27,7 @@ OpenAI's [best practices](https://developers.openai.com/api/docs/guides/evaluati
 
 ## Mapping to this repository
 
-This repository currently imports Codex session logs and can assess registered task outcomes through its existing provider-neutral task records. Its task report names that view `anthropic_evaluation`, because the implemented task/trial/outcome method is documented in [ANTHROPIC_EVALUATION.md](ANTHROPIC_EVALUATION.md). A separate project-defined [`self_improvement_evaluation`](IMPROVEMENT_EVALUATION.md) compares controlled before/after results. There is **no separate OpenAI evaluation engine, `openai_evaluation` report field, OpenAI dashboard connection, or Evals API call**. This file documents how to design an OpenAI-guided evaluation; it does not claim that such a report is already generated.
+This repository currently imports Codex session logs and can assess registered task outcomes through its existing provider-neutral task records. Its task report names that view `anthropic_evaluation`, because the implemented task/trial/outcome method is documented in [ANTHROPIC.md](ANTHROPIC.md). A separate project-defined [`self_improvement_evaluation`](IMPROVEMENT_EVALUATION.md) compares controlled before/after results. There is **no separate OpenAI evaluation engine, `openai_evaluation` report field, OpenAI dashboard connection, or Evals API call**. This file documents how to design an OpenAI-guided evaluation; it does not claim that such a report is already generated.
 
 | OpenAI-guided requirement | Current local evidence or gap |
 |---|---|
@@ -36,7 +36,7 @@ This repository currently imports Codex session logs and can assess registered t
 | Trace and end result | `transcript_ref`, grader evidence, and `outcome` can be imported; completeness and truth are not guaranteed by a reference or hash |
 | Repeatable comparisons | Controlled tasks group by source, suite, model, and harness; clean environment and comparable runs need external assurance |
 | Human calibration of automated grades | A calibration reference is required for imported model graders; agreement is not computed |
-| Continuous evaluation | [AUTO_EVALUATION.md](AUTO_EVALUATION.md) describes an agent-run daily record workflow; there is no background scheduler or OpenAI service integration |
+| Continuous evaluation | [AGENTS.md](../AGENTS.md) describes an agent-run daily record workflow; there is no background scheduler or OpenAI service integration |
 
 For a concrete OpenAI-guided suite, define the intended user task and acceptance decision before running the agent. Include representative successes and failures, pin the dataset and grader versions, keep the model and harness conditions, retain a trace and output artifact for every run, and report missing runs separately from failures. Review a sample of traces and grades, especially surprising passes or failures. These are local implementation recommendations derived from the official guidance, not an OpenAI protocol.
 

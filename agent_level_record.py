@@ -6,6 +6,7 @@ import json
 import math
 import os
 from pathlib import Path
+import selectors
 import signal
 import subprocess
 import sys
@@ -41,8 +42,9 @@ def start(args):
         raise ValueError('workspace must be the repo or an ancestor directory')
     if not math.isfinite(args.timeout) or args.timeout <= 0:
         raise ValueError('timeout must be positive and finite')
-    if any(not value.strip() for value in (args.model, args.harness_version, args.criteria)):
-        raise ValueError('model, harness version and criteria must not be empty')
+    if any(not value.strip() for value in (args.model, args.reasoning_effort,
+                                           args.harness_version, args.criteria)):
+        raise ValueError('model, reasoning effort, harness version and criteria must not be empty')
     command = args.check[1:] if args.check[:1] == ['--'] else args.check
     store = workspace
     for part in ('.' + args.source, 'agent-eval', 'tasks'):
@@ -54,6 +56,7 @@ def start(args):
     directory = store / task_id
     directory.mkdir(mode=0o700)
     task = dict(task_id=task_id, repo=str(repo), source=args.source, model=args.model,
+                reasoning_effort=args.reasoning_effort,
                 harness_version=args.harness_version, suite_id='daily', suite_version='1',
                 evaluation_mode='daily', acceptance_criteria=args.criteria,
                 required_graders=['acceptance'], planned_trials=1,
@@ -63,6 +66,52 @@ def start(args):
     write_json(directory, 'results.json', dict(schema_version='1.1', collector='daily-v1', tasks=[task]))
     print(directory)
     return 0
+
+
+class OutputLimitExceeded(Exception):
+    pass
+
+
+def run_check(command, cwd, timeout, output):
+    """Capture bounded output while enforcing a deadline on the process group."""
+    process = subprocess.Popen(command, cwd=cwd, stdout=subprocess.PIPE,
+                               stderr=subprocess.STDOUT, start_new_session=True)
+    deadline = time.monotonic() + timeout
+    completed = False
+    try:
+        with process.stdout, selectors.DefaultSelector() as selector:
+            selector.register(process.stdout, selectors.EVENT_READ)
+            written = 0
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, timeout)
+                for key, _ in selector.select(remaining):
+                    chunk = os.read(key.fd, 65536)
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    available = MAX_EVIDENCE_BYTES - written
+                    output.write(chunk[:available])
+                    written += min(len(chunk), available)
+                    if len(chunk) > available:
+                        raise OutputLimitExceeded()
+            code = process.wait(timeout=max(0, deadline - time.monotonic()))
+            completed = True
+            return code, False, None
+    except subprocess.TimeoutExpired:
+        return None, True, 'acceptance timed out'
+    except KeyboardInterrupt:
+        return None, False, 'acceptance interrupted'
+    except OutputLimitExceeded:
+        return None, False, 'acceptance output exceeds evidence size limit'
+    finally:
+        if not completed:
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.wait()
 
 
 def finish(args):
@@ -98,15 +147,8 @@ def finish(args):
             write_json(directory, 'results.json', ledger)
             try:
                 with (directory / 'check.log').open('xb') as output:
-                    process = subprocess.Popen(command, cwd=task['repo'], stdout=output,
-                                               stderr=subprocess.STDOUT, start_new_session=True)
-                    try:
-                        exit_code = process.wait(timeout=task['check_timeout_seconds'])
-                    except (subprocess.TimeoutExpired, KeyboardInterrupt) as exc:
-                        os.killpg(process.pid, signal.SIGKILL)
-                        process.wait()
-                        timed_out = isinstance(exc, subprocess.TimeoutExpired)
-                        error = 'acceptance timed out' if timed_out else 'acceptance interrupted'
+                    exit_code, timed_out, error = run_check(
+                        command, task['repo'], task['check_timeout_seconds'], output)
                 output_path = directory / 'check.log'
                 if output_path.stat().st_size > MAX_EVIDENCE_BYTES:
                     error = 'acceptance output exceeds evidence size limit'
@@ -147,6 +189,8 @@ def main(argv=None):
     begin.add_argument('--workspace', type=Path, help='ancestor workspace storing records (default: repo)')
     begin.add_argument('--source', choices=('codex', 'claude'), required=True)
     begin.add_argument('--model', required=True)
+    begin.add_argument('--reasoning-effort', '--effort', default='unknown',
+                       help='actual effort for this run, or unknown when unavailable')
     begin.add_argument('--harness-version', default='unknown')
     begin.add_argument('--criteria', required=True)
     begin.add_argument('--timeout', type=float, default=300)

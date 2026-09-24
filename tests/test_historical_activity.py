@@ -134,13 +134,14 @@ class TestHistory(TempCase):
             rc, output, err = self.cli(['--source', 'codex', '--codex-dir', str(self.root), '--project-dir', str(self.project), '--format', fmt])
             self.assertEqual(rc, 0, err)
             self.assertNotIn('PRIVATE_', output)
+            self.assertNotRegex(output, r'[\u3400-\u4dbf\u4e00-\u9fff]')
             if fmt == 'json':
                 report = json.loads(output)['reports']['codex']
                 self.assertTrue(report['project_filter']['enabled'])
                 self.assertEqual(report['anthropic_evaluation']['historical_activity']['verification_passed'], 1)
             else:
-                self.assertIn('历史日常活动', output)
-                self.assertIn('返回成功', output)
+                self.assertIn('Historical activity', output)
+                self.assertIn('successful returns', output)
             if fmt == 'html':
                 self.assertIn('<option value="both" selected>', output)
 
@@ -154,8 +155,8 @@ class TestHistory(TempCase):
         rc, output, err = self.cli(['--source', 'codex', '--codex-dir', str(self.root),
                                     '--project-dir', str(self.project), '--format', 'txt'])
         self.assertEqual(rc, 0, err)
-        self.assertIn('无法展开的编排调用 1 次', output)
-        self.assertIn('不代表未执行验证', output)
+        self.assertIn('Unexpanded orchestration calls 1;', output)
+        self.assertIn('does not imply no verification', output)
         self.assertNotIn('PRIVATE_', output)
 
     def test_merged_provider_activity_keeps_unknown_results_and_main_sessions(self):

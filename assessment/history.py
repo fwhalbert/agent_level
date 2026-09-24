@@ -94,18 +94,19 @@ class History:
             self.result(*key, verdict)
 
 
-HISTORY_NOTE = ('历史会话不等于任务。结束标记仅表示会话最近一轮已结束；验证成功仅表示关联的 '
-                'build/test 工具返回成功，不证明需求已验收。未见结束或结果时保持未知；不从历史日志计算任务成功率。')
+HISTORY_NOTE = ('Historical sessions are not tasks. An end marker only means the latest turn ended; '
+                'a successful build/test tool return does not prove task acceptance. Missing ends or '
+                'results remain unknown; task success rates are not inferred from logs.')
 
 
 def render_history(activity):
-    text = ('历史日常活动（日志线索）\n'
-            '主会话 {sessions}：最近记录为结束 {ended_sessions} / 中断或错误 {interrupted_sessions} / '
-            '未见结束标记 {open_sessions}\n'
-            '可识别验证调用 {verification_calls}：返回成功 {verification_passed} / '
-            '返回失败 {verification_failed} / 结果未知 {verification_unknown}\n'.format(**activity) + HISTORY_NOTE)
+    text = ('Historical activity (log signals)\n'
+            'Primary sessions {sessions}: latest turn ended {ended_sessions} / interrupted or errored {interrupted_sessions} / '
+            'No end marker {open_sessions}\n'
+            'Recognized verification calls {verification_calls}: successful returns {verification_passed} / '
+            'failed returns {verification_failed} / unknown results {verification_unknown}\n'.format(**activity) + HISTORY_NOTE)
 
     if activity.get('opaque_orchestrator_calls'):
-        text += ('\n无法展开的编排调用 {} 次；其中的内部验证未纳入上述计数，'
-                 '可识别验证调用为 0 不代表未执行验证。').format(activity['opaque_orchestrator_calls'])
+        text += ('\nUnexpanded orchestration calls {}; internal verification is excluded from these counts. '
+                 'Zero recognized calls does not imply no verification.').format(activity['opaque_orchestrator_calls'])
     return text

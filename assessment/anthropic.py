@@ -14,19 +14,70 @@ from .references import ANTHROPIC_URL, METHOD_NOTE
 
 SCHEMA_VERSION = '1.0'
 IDENTITY = ('source', 'suite_id', 'suite_version', 'model', 'harness_version', 'task_id')
+# Defaults for legacy records that omitted effort. Keep this list narrow: unknown
+# models have no defensible inferred effort. Explicit "unknown" is not backfilled.
+# https://developers.openai.com/api/docs/guides/reasoning
+# https://platform.claude.com/docs/en/build-with-claude/effort
+OFFICIAL_DEFAULT_EFFORT = {
+    ('codex', 'gpt-6-sol'): 'medium',
+    ('codex', 'gpt-6-luna'): 'medium',
+    ('codex', 'gpt-5.5'): 'medium',
+    ('codex', 'gpt-5.6'): 'medium',
+    ('claude', 'claude-opus-5-5'): 'medium',
+    ('claude', 'opus 5.5'): 'medium',
+    ('claude', 'opus 5.5 (1m context)'): 'medium',
+    ('claude', 'claude-opus-5'): 'high',
+    ('claude', 'opus 5'): 'high',
+    ('claude', 'claude-sonnet-5'): 'high',
+}
 STEPS = [
-    ('task', '任务与成功标准', '明确 task、验收标准和预定 graders；受控评测另需参考解。'),
-    ('trial', '独立试验与环境', '记录 trial、时间和运行版本；环境重置仅为受控评测要求。'),
-    ('transcript', '执行轨迹', '保留可追溯的 transcript；会话数量不能代替 trial 数量。'),
-    ('grader', '评分证据', '所有必需 grader 均有结果与证据引用；模型评分另附人工校准引用。'),
-    ('outcome', '最终结果', '明确最终状态及验收证据，不能以测试调用或 Agent 自述替代。'),
-    ('repeat', '重复试验可靠性', '同一任务、来源、模型、框架及评测版本下重复试验。'),
-    ('audit', '人工复核', '记录任务/评分器与轨迹的人工审阅；引用本身不等于独立审计。'),
+    ('task', 'Task and success criteria', 'Define task, acceptance criteria, and planned graders; controlled evaluations also need a reference solution.'),
+    ('trial', 'Independent trials and environment', 'Record trial, time, and runtime version; environment reset is required only for controlled evaluations.'),
+    ('transcript', 'Execution trace', 'Keep a traceable transcript; session count cannot replace trial count.'),
+    ('grader', 'Grader evidence', 'Every required grader needs a result and evidence reference; model graders also need a human calibration reference.'),
+    ('outcome', 'Final outcome', 'Record the final outcome and acceptance evidence; a test call or agent claim cannot replace them.'),
+    ('repeat', 'Repeat reliability', 'Repeat trials under the same task, source, model, effort, harness, and suite version.'),
+    ('audit', 'Human review', 'Record human review of task/graders and transcript; a reference alone is not an independent audit.'),
 ]
+REASONS = {
+    'acceptance_failed': 'Acceptance failed', 'missing_or_inconsistent_evidence': 'Grading missing or inconsistent',
+    'execution_incomplete': 'Execution incomplete / interrupted', 'conflicting_record': 'Conflicting record',
+    'conflicting_task': 'Conflicting task definition', 'evidence_verification_failed': 'Local evidence verification failed',
+    'invalid_record': 'Invalid trial record', 'outside_window': 'Trial outside selected period',
+}
 
 
 def _text(value):
     return isinstance(value, str) and bool(value.strip())
+
+
+def task_effort(task):
+    """Use recorded effort, or a documented model default for older records."""
+    effort = task.get('reasoning_effort')
+    if effort is not None:
+        return effort.strip().lower() if _text(effort) else 'unknown'
+    model = task.get('model')
+    if not _text(model):
+        return 'unknown'
+    return OFFICIAL_DEFAULT_EFFORT.get((task.get('source'), model.strip().lower()), 'unknown')
+
+
+def filter_evals(data, model=None, effort=None):
+    """Select imported task evidence without changing the original task objects."""
+    if data is None or (model is None and effort is None):
+        return data
+
+    def matches(item):
+        return (isinstance(item, dict)
+                and (model is None or (isinstance(item.get('model'), str)
+                                       and item['model'].strip().casefold() == model.strip().casefold()))
+                and (effort is None or task_effort(item) == effort.strip().casefold()))
+
+    selected = dict(data)
+    selected['tasks'] = [task for task in data['tasks'] if matches(task)]
+    if isinstance(data.get('improvement_comparisons'), list):
+        selected['improvement_comparisons'] = [item for item in data['improvement_comparisons'] if matches(item)]
+    return selected
 
 
 def _timestamp(value):
@@ -47,10 +98,10 @@ def load_evals(path):
     try:
         data = json.loads(Path(path).read_text(encoding='utf-8'))
     except (OSError, ValueError, UnicodeError):
-        raise ValueError('无法读取评测结果 JSON（需要 UTF-8 JSON 文件）') from None
+        raise ValueError('Cannot read evaluation results (expected a UTF-8 JSON file)') from None
     if (not isinstance(data, dict) or data.get('schema_version') not in ('1.0', '1.1')
             or not isinstance(data.get('tasks'), list)):
-        raise ValueError('评测结果需要 schema_version="1.0" 或 "1.1" 和 tasks 数组')
+        raise ValueError('Evaluation results require schema_version="1.0" or "1.1" and a tasks array')
     return data
 
 
@@ -128,7 +179,9 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
                 or task.get('evaluation_mode', 'controlled') not in ('daily', 'controlled')):
             diagnostics['invalid_tasks'] += 1
             continue
-        key = (task.get('evaluation_mode', 'controlled'),) + tuple(task[field] for field in IDENTITY)
+        key = ((task.get('evaluation_mode', 'controlled'),)
+               + tuple(task[field] for field in IDENTITY[:-1])
+               + (task_effort(task), task['task_id']))
         if key in records:
             if records[key] == task:
                 diagnostics['duplicate_tasks'] += 1
@@ -253,7 +306,7 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
         durations = [v for t in tasks for v in t['durations']]
         interventions = [v for t in tasks for v in t['interventions']]
         group_reports.append({
-            'label': f'评测组 {index}', 'source': key[1], 'evaluation_mode': mode, 'tasks': len(tasks),
+            'label': f'Evaluation group {index}', 'source': key[1], 'evaluation_mode': mode, 'tasks': len(tasks),
             'complete_tasks': len(complete), 'repeated_tasks': len(repeated), 'outcomes': sums,
             'coverage': sums['graded'] / sums['expected'],
             'observed_success_rate': sums['success'] / sums['graded'] if sums['graded'] else None,
@@ -285,9 +338,9 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
                           'status': 'recorded' if total and have == total else 'partial' if have else 'missing'})
     return {
         'method': 'anthropic_evals', 'method_version': '1.1', 'reference_url': ANTHROPIC_URL,
-        'status': state, 'status_label': {'imported_results': '已有任务结果 · 请结合证据核验范围',
-                                        'partial_evidence': '部分证据 · 已保留可用结果',
-                                        'insufficient_evidence': '证据不足 · 无法判定任务能力'}[state],
+        'status': state, 'status_label': {'imported_results': 'Task results available · Check evidence coverage',
+                                        'partial_evidence': 'Partial evidence · Available results retained',
+                                        'insufficient_evidence': 'Insufficient evidence · Task capability cannot be determined'}[state],
         'official_certification': False, 'synthetic': bool(data and data.get('synthetic') is True),
         'evidence_basis': 'local_checked' if evidence_reader is not None else 'imported' if data is not None else 'logs_only',
         'k': k, 'counts': {name: counts[name] for name in count_keys},
@@ -300,42 +353,49 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
         'log_context': {'sessions': len(metrics.sessions), 'tool_calls': metrics.tool_calls,
                         'verification_attempts': metrics.verification_calls},
         'limitations': [METHOD_NOTE,
-            '自动采集事件日志仅覆盖登记、备注与验收，不等同于完整会话轨迹；本地一致性核验不证明 Agent 自定标准覆盖了全部需求。',
-            '日常任务按一次验收记录，受控评测才计算 pass@k / pass^k；两者不混合排名。',
-            '本地核验仅检查所选目录中的文件哈希、评分内容与产物关联，不等于独立审计或验证需求覆盖。',
-            '已评分通过率仅描述有结果的子集；成功率上下界把未知及未执行纳入分母，不是置信区间。',
-            '重复概率仅对完整受控任务组计算；缺失、冲突记录局部隔离，其余证据保留。无法归属的无效任务单独诊断，不进入任何组的分母。',
-            '按来源、模式、评测集/版本、模型及框架分组；上下界与重复概率按任务等权。',
-            '日常完整任务组提供 95% Wilson 区间，假设任务结果独立且可视为共同成功概率的样本；不消除任务选择偏差。',
-            '窗口外试验对纳入任务的计划口径视为未知，单独列出；未执行计划不能通过日期筛选消失。',
-            '日志次数、自报配置和参考解引用不自动成为成功证据；历史日志不能补造独立重复试验。',
+            'The collected event journal covers registration, notes, and acceptance, not the full session. Local consistency checks do not prove that the agent-defined criteria cover every requirement.',
+            'Daily tasks record one acceptance run. Only controlled evaluations calculate pass@k / pass^k; the modes are not ranked together.',
+            'Local verification checks file hashes, grader content, and artifact links in the selected directory. It is not an independent audit or a check of requirement coverage.',
+            'The graded pass rate describes only trials with results. Success bounds include unknown and unrun trials in the denominator; they are not confidence intervals.',
+            'Repeat probabilities are calculated only for complete controlled groups. Missing or conflicting records are isolated, while other evidence is kept. Invalid unassigned tasks are diagnosed separately and excluded from group denominators.',
+            'Groups are separated by source, mode, suite/version, model, effort, and harness. Bounds and repeat probabilities weight tasks equally.',
+            'Complete daily groups include a 95% Wilson interval, assuming independent outcomes sampled from a common success probability. It does not remove task selection bias.',
+            'Out-of-window trials count as unknown in the planned denominator and are listed separately. Date filters do not remove unrun plans.',
+            'Log counts, self-reported settings, and reference links are not success evidence. Historical logs cannot create independent repeat trials retroactively.',
         ],
     }
 
 def render_summary(report, markdown=False):
     c = report['counts']
-    lines = [('## ' if markdown else '') + 'Anthropic 方法评估', '', report['status_label'],
-             f"任务 {c['tasks']} · 完整任务 {c['complete_tasks']} · 试验 {c['trials']} · 有评分证据 {c['graded_trials']}",
-             '此方法不输出 L0–L7 等级；证据核验不代表独立审计。']
+    lines = [('## ' if markdown else '') + 'Anthropic evaluation methodology', '', report['status_label'],
+             f"Tasks {c['tasks']} · Complete tasks {c['complete_tasks']} · Trials {c['trials']} · Trials with grader evidence {c['graded_trials']}",
+             'This method does not assign an L0–L7 level; evidence checks are not an independent audit.']
     if report.get('historical_activity', {}).get('sessions'):
         lines.extend(['', render_history(report['historical_activity']), ''])
     if report.get('synthetic'):
-        lines.append('虚构示例数据：仅演示格式和统计，不代表真实能力。')
-    lines.append(f"成功 {c['successful_trials']} / 失败 {c['failed_trials']} / 未知 {c['unknown_trials']} / 未执行 {c['not_run_trials']}；本地证据核验 {c['verified_trials']} 次")
+        lines.append('Synthetic example data illustrates the format and statistics; it does not represent real capability.')
+    lines.append(f"Success {c['successful_trials']} / failure {c['failed_trials']} / unknown {c['unknown_trials']} / unrun {c['not_run_trials']}; Local evidence verification {c['verified_trials']} runs")
     if c.get('collector_journal_trials') or c.get('session_export_trials'):
-        lines.append(f"轨迹范围：采集事件日志 {c.get('collector_journal_trials', 0)} 次；会话导出 {c.get('session_export_trials', 0)} 次。事件日志不等于完整会话轨迹。")
+        lines.append(f"Trace coverage: collector journal {c.get('collector_journal_trials', 0)} runs; session export {c.get('session_export_trials', 0)} runs. An event journal is not a full session transcript.")
     for group in report['groups']:
-        fmt = lambda value: '证据不足' if value is None else f'{value:.1%}'
-        lines.append(f"{group['label']} ({group['source']}, {group['evaluation_mode']}): pass@1={fmt(group['pass_at_1'])}, "
-                     f"pass@{report['k']}={fmt(group['pass_at_k'])}, pass^{report['k']}={fmt(group['pass_power_k'])}")
-        lines.append(f"覆盖率={fmt(group['coverage'])}；已评分通过率={fmt(group['observed_success_rate'])}；计划口径成功率上下界={fmt(group['success_bounds'][0])} .. {fmt(group['success_bounds'][1])}")
+        fmt = lambda value: 'Insufficient evidence' if value is None else f'{value:.1%}'
         if group['evaluation_mode'] == 'daily':
-            lines.append(f"日常验收通过率={fmt(group['daily_success_rate'])}；95% Wilson 区间={group['daily_wilson_95']}")
+            lines.append(f"{group['label']} ({group['source']}, daily): One acceptance run per daily task; pass@k / pass^k are not calculated")
+        else:
+            lines.append(f"{group['label']} ({group['source']}, controlled): pass@1={fmt(group['pass_at_1'])}, "
+                         f"pass@{report['k']}={fmt(group['pass_at_k'])}, pass^{report['k']}={fmt(group['pass_power_k'])}")
+        lines.append(f"Grading coverage={fmt(group['coverage'])}; Graded pass rate={fmt(group['observed_success_rate'])}; Planned success bounds={fmt(group['success_bounds'][0])} .. {fmt(group['success_bounds'][1])}")
+        if group['evaluation_mode'] == 'daily':
+            lines.append(f"Daily acceptance pass rate={fmt(group['daily_success_rate'])}; 95% Wilson interval={group['daily_wilson_95']}")
+    if report['failure_reasons']:
+        lines.append('Failure and missing evidence reasons: ' + '; '.join(
+            f"{REASONS.get(reason, reason)}: {count}"
+            for reason, count in report['failure_reasons'].items()))
     for row in report['readiness']:
-        lines.append(f"- {row['label']}: {row['present']}/{row['total']}；{row['requirement']}")
+        lines.append(f"- {row['label']}: {row['present']}/{row['total']}; {row['requirement']}")
     for note in report['limitations']:
         lines.append('- ' + note)
     if report['diagnostics']:
-        lines.append('导入诊断：' + json.dumps(report['diagnostics'], ensure_ascii=False))
-    lines.append('方法原文：' + ANTHROPIC_URL)
+        lines.append('Import diagnostics: ' + json.dumps(report['diagnostics'], ensure_ascii=False))
+    lines.append('Published method: ' + ANTHROPIC_URL)
     return '\n'.join(lines)

@@ -8,7 +8,7 @@ The L0–L7 names, cumulative gates, and numeric thresholds such as 50 tool call
 
 **Anthropic (2026). [Demystifying evals for AI agents](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents).**
 
-Distinguishes task, trial, grader, transcript, and outcome; emphasizes explicit success criteria, repeated trials, final-result checks, grader design, and human review. The Anthropic view organizes evidence and outcomes along these lines. The article defines neither this project's L0–L7 scale nor its JSON fields, default k, or completeness gates. See [ANTHROPIC_EVALUATION.md](ANTHROPIC_EVALUATION.md) for the implementation mapping.
+Distinguishes task, trial, grader, transcript, and outcome; emphasizes explicit success criteria, repeated trials, final-result checks, grader design, and human review. The Anthropic view organizes evidence and outcomes along these lines. The article defines neither this project's L0–L7 scale nor its JSON fields, default k, or completeness gates. See [ANTHROPIC.md](ANTHROPIC.md) for the implementation mapping.
 
 **Anthropic, [Define success criteria and build evaluations](https://platform.claude.com/docs/en/test-and-evaluate/develop-tests).**
 
@@ -16,7 +16,7 @@ The Claude Platform documentation covers explicit success criteria and code, hum
 
 **OpenAI, [Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices) and [Evaluate agent workflows](https://developers.openai.com/api/docs/guides/agent-evals).**
 
-These official OpenAI documentation pages describe task-specific objectives, datasets, graders, traces, and repeated evaluation. They do not define a universal level scale or validate this project's scoring rules. [OPENAI_EVALUATION.md](OPENAI_EVALUATION.md) maps that guidance to the project's current capabilities and gaps. The [OpenAI deprecations page](https://developers.openai.com/api/docs/deprecations) supplies the current legacy Evals platform timeline.
+These official OpenAI documentation pages describe task-specific objectives, datasets, graders, traces, and repeated evaluation. They do not define a universal level scale or validate this project's scoring rules. [OPENAI.md](OPENAI.md) maps that guidance to the project's current capabilities and gaps. The [OpenAI deprecations page](https://developers.openai.com/api/docs/deprecations) supplies the current legacy Evals platform timeline.
 
 ## Related research and engineering methods
 

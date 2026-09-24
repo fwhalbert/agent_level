@@ -8,7 +8,7 @@ import hashlib
 import json
 import math
 
-from .anthropic import _task_ready, _trial_evidence, _timestamp
+from .anthropic import _task_ready, _trial_evidence, _timestamp, task_effort
 
 
 FIELDS = ('source', 'suite_id', 'suite_version', 'model')
@@ -106,7 +106,7 @@ def assess(data=None, evidence_reader=None, sources=None, since=None, until=None
             continue
         if comparison['source'] not in source_set:
             continue
-        row = {'label': '改进对照 ' + str(len(rows) + 1), 'source': comparison['source'],
+        row = {'label': 'Improvement comparison ' + str(len(rows) + 1), 'source': comparison['source'],
                'status': 'insufficient_evidence', 'reason': None, 'tasks': 0, 'trials_per_variant': 0,
                'baseline_success': None, 'candidate_success': None, 'success_delta': None,
                'baseline_autonomous': None, 'candidate_autonomous': None, 'autonomous_delta': None,
@@ -146,7 +146,8 @@ def assess(data=None, evidence_reader=None, sources=None, since=None, until=None
         cohorts = {}
         duplicate = False
         for task in tasks:
-            if not isinstance(task, dict) or any(task.get(k) != comparison[k] for k in FIELDS):
+            if (not isinstance(task, dict) or any(task.get(k) != comparison[k] for k in FIELDS)
+                    or task_effort(task) != task_effort(comparison)):
                 continue
             version = task.get('harness_version')
             if version not in (comparison['baseline_harness_version'], comparison['candidate_harness_version']):
@@ -226,28 +227,28 @@ def assess(data=None, evidence_reader=None, sources=None, since=None, until=None
             'diagnostics': diagnostics, 'evidence_basis': 'local_checked' if evidence_reader else 'none',
             'independent_execution_verified': False,
             'limitations': [
-                '本地哈希、评分和配对核验不能证明评测集保密、运行独立、变更确由 Agent 提出，或排除挑选性报告。',
-                '真正的独立评估需要由改进 Agent 之外的评测方预先固定任务和评分器，隔离执行前后版本，并保管原始证据。',
-                '受控对照每个版本的每项任务至少运行 3 次，并要求完整会话导出；这些是本项目的最低证据要求。',
-                'supported_gain 仅表示本地核验证据完整、未见任务退步，且任务级单侧符号检验 p≤0.05；不是因果证明或官方认证。',
+                'Local hash, grading, and pairing checks cannot establish holdout secrecy, independent runs, agent authorship, or freedom from selective reporting.',
+                'An independent evaluator must freeze tasks and graders in advance, run both versions in isolation, and retain the raw evidence.',
+                'Controlled comparisons require at least three runs per task per version and full session exports. These are this project’s minimum evidence requirements.',
+                'supported_gain means locally checked evidence is complete, no task regressed, and the one-sided task-level sign test has p≤0.05. It is not causal proof or certification.',
             ]}
 
 
 def render_summary(report, markdown=False):
     heading = '## ' if markdown else ''
-    lines = [heading + '本地自我改进对照', '']
+    lines = [heading + 'Local self-improvement comparison', '']
     if not report['comparisons']:
-        lines.append('尚无预先定义的改进前后受控对照；不能从 L6 自报字段推断实际改进。')
+        lines.append('No predefined controlled before/after comparison is available. L6 self-reports do not prove improvement.')
     for row in report['comparisons']:
         lines.append(f"{row['label']} ({row['source']}): {row['status']}")
         if row['reason']:
-            lines.append('证据缺口：' + row['reason'])
+            lines.append('Evidence gap: ' + row['reason'])
         else:
-            lines.append(f"任务 {row['tasks']} · 每版本试验 {row['trials_per_variant']} · "
-                         f"无人干预成功率 {row['baseline_autonomous']:.1%} → {row['candidate_autonomous']:.1%} "
+            lines.append(f"Tasks {row['tasks']} · Trials per version {row['trials_per_variant']} · "
+                         f"Autonomous success rate {row['baseline_autonomous']:.1%} → {row['candidate_autonomous']:.1%} "
                          f"({row['autonomous_delta']:+.1%})")
-            lines.append(f"总体成功率 {row['baseline_success']:.1%} → {row['candidate_success']:.1%}；"
-                         f"改善/退步/不变任务 {row['improved_tasks']}/{row['regressed_tasks']}/{row['unchanged_tasks']}；"
-                         f"符号检验 p={row['sign_test_p'] if row['sign_test_p'] is not None else '不适用'}")
-    lines.append('本地核验不等于独立执行；需由外部评测方控制任务集、运行及证据保管。')
+            lines.append(f"Overall success rate {row['baseline_success']:.1%} → {row['candidate_success']:.1%}; "
+                         f"Improved / regressed / unchanged tasks {row['improved_tasks']}/{row['regressed_tasks']}/{row['unchanged_tasks']}; "
+                         f"Sign test p={row['sign_test_p'] if row['sign_test_p'] is not None else 'N/A'}")
+    lines.append('Local checks are not independent execution. An outside evaluator must control the task suite, runs, and evidence.')
     return '\n'.join(lines)

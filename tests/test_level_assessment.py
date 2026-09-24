@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-assess.py 的自检测试。
+Regression tests for assess.py.
 
-只用合成 fixture, 不依赖真实 ~/.claude 数据。
+Uses synthetic fixtures without accessing real ~/.claude data.
 
     python3 -m unittest tests.test_level_assessment -v
 """
@@ -36,7 +36,7 @@ def assistant(tools=(), cache_read=0, cache_creation=0, out=0, sidechain=False,
                               "cache_read_input_tokens": cache_read,
                               "cache_creation_input_tokens": cache_creation,
                               "output_tokens": out,
-                              # iterations 镜像顶层数据, 不应被重复累加
+                              # Iterations mirror top-level data and must not be counted twice.
                               "iterations": [{"input_tokens": 1,
                                               "cache_read_input_tokens": cache_read,
                                               "cache_creation_input_tokens": cache_creation,
@@ -93,7 +93,7 @@ class TestBashClassifier(unittest.TestCase):
         ("pytest -q", "test"), ("python3 -m pytest tests/", "test"),
         ("npm run test", "test"), ("cargo test --all", "test"),
         ("make check", "test"), ("make -j8", "build"),
-        # 嵌入式工程里 "跑编出来的东西" 就是验证步骤
+        # Running a compiled binary is a verification step in embedded engineering.
         ("make -s run", "test"), ("make run-vad_v2", "test"),
         ("./test_v2_vs_wolf", "test"), ("./build/bin/vad_test in.bin", "test"),
         ("./install.sh", "other"), ("./build/bin/vad_v2 in.bin", "other"),
@@ -120,7 +120,7 @@ class TestBashClassifier(unittest.TestCase):
         self.assertEqual(A.classify_bash("FOO=1 BAR=2 node a.js"), "node")
 
     def test_heredoc_body_ignored(self):
-        # heredoc 正文是数据, 不该把命令误判成 build
+        # Heredoc bodies are data, not build commands.
         self.assertEqual(
             A.classify_bash("cat > build.sh <<'EOF'\n#!/bin/bash\nmake -j\nEOF"), "read")
         self.assertEqual(
@@ -136,7 +136,7 @@ class TestBashClassifier(unittest.TestCase):
 
 class TestHumanFilter(unittest.TestCase):
     def test_plain_text_is_human(self):
-        self.assertTrue(A.is_human_input(user("帮我修这个 bug")))
+        self.assertTrue(A.is_human_input(user("Help me fix this bug")))
 
     def test_tool_result_is_not(self):
         self.assertFalse(A.is_human_input(tool_result()))
@@ -162,7 +162,7 @@ class TestHumanFilter(unittest.TestCase):
 
     def test_real_text_beside_ide_noise_is_human(self):
         self.assertTrue(A.is_human_input(user(
-            "<ide_opened_file>x</ide_opened_file>\n继续修一下测试")))
+            "<ide_opened_file>x</ide_opened_file>\nContinue fixing the tests")))
 
     def test_image_block_is_human(self):
         rec = user("")
@@ -238,7 +238,7 @@ class TestMetrics(unittest.TestCase):
 
 
 class TestLevels(unittest.TestCase):
-    """累积 Gate: 每一级都必须先满足前一级。"""
+    """Cumulative gates: each level requires the preceding level."""
 
     @staticmethod
     def _l0():
@@ -246,28 +246,28 @@ class TestLevels(unittest.TestCase):
 
     @staticmethod
     def _l1():
-        # 有对话, 但几乎没有工具执行
+        # Conversation with almost no tool execution.
         recs = []
         for _ in range(10):
-            recs += [user("解释一下这段代码"), assistant()]
+            recs += [user("Explain this code"), assistant()]
         return write_dir({"a.jsonl": recs})
 
     @staticmethod
     def _l2():
-        # AI 会改 repo, 但人几乎每步都在指挥 -> 达不到 L3 的比值门槛
+        # Edits directed at nearly every step do not meet the L3 tool/input ratio.
         recs = []
         for _ in range(40):
-            recs += [user("改一下这里"),
+            recs += [user("Change this section"),
                      assistant(tools=[("Edit", {})]), tool_result(),
                      assistant()]
         return write_dir({"a.jsonl": recs})
 
     @staticmethod
     def _l3():
-        # 单 agent 长链, 但无任何 delegation 信号
+        # A long single-agent workflow with no delegation signals.
         recs = []
         for _ in range(20):
-            recs.append(user("修好这个 bug 并跑通测试"))
+            recs.append(user("Fix this bug and make the tests pass"))
             recs.append(assistant(tools=[("Edit", {})]))
             for _ in range(5):
                 recs += [assistant(tools=[("Bash", {"command": "pytest"})]),
@@ -282,7 +282,7 @@ class TestLevels(unittest.TestCase):
             recs = []
             ts = f"2026-09-{10 + day}T10:00:00Z"
             for _ in range(5):
-                recs.append(user("实现并验证", ts=ts))
+                recs.append(user("Implement and verify", ts=ts))
                 recs.append(assistant(tools=[("Edit", {})], ts=ts))
                 for _ in range(12):
                     recs.append(assistant(tools=[("Bash", {"command": "pytest"})], ts=ts))
@@ -357,7 +357,7 @@ class TestLevels(unittest.TestCase):
         shutil.rmtree(root)
 
     def test_l5_evidence_cannot_skip_l4(self):
-        """累积 Gate: 行为数据只到 L2 时, 填满 L5–L7 证据也不能跳级。"""
+        """Cumulative gates prevent L5–L7 declarations from bypassing observed L2 behavior."""
         root = self._l2()
         _, r = assess(root, cfg_file({"l5": FULL_L5, "l6": FULL_L6, "l7": FULL_L7}))
         self.assertEqual(r["current"], 2)
@@ -385,7 +385,7 @@ class TestLevels(unittest.TestCase):
 
 class TestRenderPrivacy(unittest.TestCase):
     SECRET_CMD = "grep -rn SUPERSECRETTOKEN /home/someone/private/repo"
-    SECRET_PROMPT = "请不要泄露 MY_PRIVATE_PROMPT_TEXT"
+    SECRET_PROMPT = "Do not disclose MY_PRIVATE_PROMPT_TEXT"
 
     def setUp(self):
         self.root = write_dir({"a.jsonl": [
@@ -456,7 +456,7 @@ class TestConfigContract(unittest.TestCase):
 
 
 def run_main(argv):
-    """跑 CLI 并吞掉报告输出, 只取退出码。"""
+    """Run the CLI, capture report output, and return the exit code."""
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf), contextlib.redirect_stderr(io.StringIO()):
         rc = A.main(["--source", "claude", "--output", "-"] + argv)
@@ -487,7 +487,7 @@ class TestCLI(unittest.TestCase):
         self.assertEqual(run_main(["--init-config", str(d / "ai-level-evidence.json")])[0], 0)
         data = json.loads((d / "ai-level-evidence.json").read_text(encoding="utf-8"))
         self.assertIn("persistent_task_pickup", data["l5"])
-        # 不覆盖已有文件
+        # Do not overwrite existing files.
         self.assertEqual(run_main(["--init-config", str(d / "ai-level-evidence.json")])[0], 1)
         self.assertEqual(run_main(["--init-config", str(d / "ai-level-evidence.json"),
                                    "--force"])[0], 0)

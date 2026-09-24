@@ -9,8 +9,10 @@ This repository can now compare a workflow before and after an agent changes a p
 3. The agent's failure analysis, proposed change, and rollback procedure are retained as files. The evaluator stores these with the plan and raw trial evidence, then exports the existing schema 1.1 `tasks` records. The evaluator should review whether the change was actually proposed by the agent and applied before candidate runs; file hashes alone cannot establish authorship or chronology.
 4. Run the read-only assessment below. Re-run the comparison on a later frozen suite to check that gains persist. Report every attempted candidate; selecting only the best comparison invalidates the stated significance level.
 
+Install and activate the workspace venv as shown in the [quick start](../README.md#quick-start), then run:
+
 ```bash
-python3 assess.py --source codex --eval-results paired-results.json \
+agent-level-assess --source codex --eval-results paired-results.json \
   --evidence-root ./paired-evidence --format txt+html
 ```
 
@@ -42,7 +44,7 @@ Add `improvement_comparisons` to an explicit schema 1.1 eval file. Both versions
 
 The hashed `plan.json` must contain `kind: "improvement_plan"`, every identity and version field from the comparison above, `task_ids` listing the frozen task set, `planned_trials_per_task` of at least 3, a timezone-aware `registered_at` before all trials, `grader_versions` mapping each task ID to its grader ID/version map, and `task_specs_sha256`. The last field is SHA-256 of the baseline task-spec array, sorted by `task_id`, with each object containing `task_id`, `acceptance_criteria`, `reference_solution_ref`, `required_graders`, and `planned_trials`; encode as UTF-8 JSON with sorted keys, no spaces, and no ASCII escaping. This ties the plan to the task definitions supplied for comparison, although it cannot prove the plan was truly registered at that time.
 
-Each controlled task must have exactly that many completed trials. Each trial needs `task_id`, `transcript_kind: "session_export"`, `human_interventions`, and all fields of the existing [task evidence protocol](ANTHROPIC_EVALUATION.md). Its code grader `command_result` and `task_outcome` evidence files must also include the matching `task_id`. Artifact IDs and transcript hashes must be unique across all compared trials. The referenced files must be beneath `--evidence-root`, regular files without symlink traversal, with matching SHA-256 hashes.
+Each controlled task must have exactly that many completed trials. Each trial needs `task_id`, `transcript_kind: "session_export"`, `human_interventions`, and all fields of the existing [task evidence protocol](ANTHROPIC.md). Its code grader `command_result` and `task_outcome` evidence files must also include the matching `task_id`. Artifact IDs and transcript hashes must be unique across all compared trials. The referenced files must be beneath `--evidence-root`, regular files without symlink traversal, with matching SHA-256 hashes.
 
 ## Scoring and limits
 

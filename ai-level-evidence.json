@@ -1,6 +1,6 @@
 {
   "_about": "L5–L7 self-reported evidence, not independently verified. In multi-source runs, top-level fields apply only to the combined view; put source-specific evidence under sources.claude or sources.codex.",
-  "_docs": "AI_ENGINEERING_LEVELS_L0-L7.md",
+  "_docs": "docs/AGENT_LEVEL_L0-L7.md",
   "l5": {
     "persistent_task_pickup": false,
     "autonomous_pr": false,

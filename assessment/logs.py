@@ -16,10 +16,10 @@ WORKFLOW_TOOLS = {"Workflow"}
 FORBIDDEN_NAMES = {".credentials.json", "auth.json", ".env", "id_rsa", "id_ed25519"}
 
 # --------------------------------------------------------------------------
-# 2. Bash 分类 (§3.3) —— 只做分类计数, 绝不输出命令原文
+# Shell classification (specification section 3.3): count categories, never report raw commands.
 # --------------------------------------------------------------------------
 
-# 优先级: 数值越大越"高价值信号", 一条命令取其中最高优先级的类别
+# Higher values take priority; assign each command its highest-priority category.
 BASH_CATEGORIES = [
     # (name, priority, regex over a sub-command)
     ("ci", 90, r"^(gh\s+(run|workflow)|act\b|circleci\b|buildkite\b)"),
@@ -28,10 +28,10 @@ BASH_CATEGORIES = [
                  r"|^python[0-9.]*\s+(-m\s+)?(pytest|unittest)\b"
                  r"|^(npm|pnpm|yarn|bun)\s+(run\s+)?test\b"
                  r"|^(cargo|go|dotnet|mvn|gradle|swift)\s+test\b"
-                 # make check / make test, 以及 make run* —— 在 C/嵌入式工程里
-                 # "跑一遍编出来的东西看结果" 就是验证步骤。
+                 # make check / make test / make run* verify C and embedded builds.
+                 # Running a compiled program and checking its result is verification.
                  r"|^make\s+(-\S+\s+)*(check|test|run)(-\S+)?\b"
-                 # 直接执行本地测试二进制/脚本: ./test_x, ./build/bin/foo_test, ./run_tests.sh
+                 # Direct execution of local test binaries or scripts: ./test_x, ./build/bin/foo_test, ./run_tests.sh
                  r"|^(\./|\.\./|/)\S*(^|[/_-])?test[\w.-]*\b"
                  r"|^\./?run_tests?\b"),
     ("build", 75, r"^(make|cmake|ninja|bazel|meson|gcc|g\+\+|clang|clang\+\+|cc|ld|tsc|webpack|vite|esbuild|rollup)\b"
@@ -159,10 +159,10 @@ def classify_bash(command: str, _depth=0) -> str:
 
 
 # --------------------------------------------------------------------------
-# 3. Human input 过滤 (§3.1 humanish_user)
+# Human input filtering (specification section 3.1: humanish_user)
 # --------------------------------------------------------------------------
 
-# 这些包裹块由 IDE / CLI / 系统产生, 不是人工输入。
+# IDE, CLI, and system wrappers are not human inputs.
 MACHINE_BLOCK_RE = re.compile(
     r"<ide_opened_file>.*?</ide_opened_file>"
     r"|<ide_selection>.*?</ide_selection>"
@@ -192,7 +192,7 @@ HUMAN_FILTER_RULES = [
 
 
 def is_human_input(rec: dict) -> bool:
-    """判断一条 user 记录是否为真正的人工输入。只看结构, 不保留文本。"""
+    """Identify human input from record structure without retaining its text."""
     if rec.get("type") != "user":
         return False
     if rec.get("isSidechain"):
@@ -225,14 +225,14 @@ def is_human_input(rec: dict) -> bool:
 
     raw = "\n".join(text_parts)
     if "<command-name>" in raw:
-        return True  # 用户主动敲了 slash command
+        return True  # The user explicitly entered a slash command.
     stripped = CAVEAT_RE.sub("", MACHINE_BLOCK_RE.sub("", raw))
     stripped = OPEN_TAG_RE.sub("", stripped).strip()
     return has_attachment or bool(stripped)
 
 
 # --------------------------------------------------------------------------
-# 4. 采集
+# Log collection
 # --------------------------------------------------------------------------
 
 def parse_date(s: str) -> datetime:
@@ -468,7 +468,7 @@ def usage_breakdown(m):
     }
 
 
-def scan(claude_dir: Path, since=None, until=None, project_dir=None) -> Metrics:
+def scan(claude_dir: Path, since=None, until=None, project_dir=None, progress=None) -> Metrics:
     m = Metrics('claude')
     m.project_filtered = project_dir is not None
     project_dir = Path(project_dir).expanduser().resolve() if project_dir is not None else None
@@ -476,6 +476,8 @@ def scan(claude_dir: Path, since=None, until=None, project_dir=None) -> Metrics:
     message_usage = {}
     for path in _paths(claude_dir / 'projects', '*.jsonl', m):
         m.files_scanned += 1
+        if progress is not None:
+            progress(m.files_scanned)
         has_data = has_sidechain = False
         cwd = None
         for rec in _records(path, m):
@@ -668,7 +670,7 @@ def _add_codex_usage(m, usage, model, ts, reasoning_reported=False):
     }, model, ts, reasoning_reported)
 
 
-def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None) -> Metrics:
+def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progress=None) -> Metrics:
     import hashlib
     m = Metrics('codex')
     m.project_filtered = project_dir is not None
@@ -677,6 +679,8 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None) -> Met
     for folder in ('sessions', 'archived_sessions'):
         for path in _paths(codex_dir / folder, '*.jsonl', m):
             m.files_scanned += 1
+            if progress is not None:
+                progress(m.files_scanned)
             meta, human_events, usage_records, turn_models = _codex_meta(path)
             if project_dir is not None and not any(project_matches(cwd, project_dir) for cwd in meta['_cwds']):
                 m.diagnostics['project_outside_files' if meta['_cwds'] else 'project_missing_cwd_files'] += 1

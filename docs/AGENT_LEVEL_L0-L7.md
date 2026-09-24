@@ -41,7 +41,7 @@ L0/L1 may happen outside these logs, such as editor completion. L2 may be an int
 2. **OBSERVED:** Log behavior meets a candidate level. This does not prove task completion, passing tests, or a change in the human role.
 3. **DECLARED:** Self-reported config meets L5–L7 conditions, without independent verification. It must not be labeled verified.
 
-Reports include `observed_level` (at most L4), `current_level` (including declarations, at most L7), and `assessment_basis`. A full capability evaluation needs outcomes, acceptance records, and sampled audit. The level rules do not read outcome ledgers. The independent [Anthropic method view](ANTHROPIC_EVALUATION.md) summarizes explicit task results; the two methods cannot promote each other's level or fill missing evidence.
+Reports include `observed_level` (at most L4), `current_level` (including declarations, at most L7), and `assessment_basis`. A full capability evaluation needs outcomes, acceptance records, and sampled audit. The level rules do not read outcome ledgers. The independent [Anthropic method view](ANTHROPIC.md) summarizes explicit task results; the two methods cannot promote each other's level or fill missing evidence.
 An optional [local self-improvement comparison](IMPROVEMENT_EVALUATION.md) now checks paired before/after task evidence. Its result is separate from the level rules and cannot automatically promote L6. An outside evaluator is still needed to establish that the holdout suite and execution were independent of the improving agent.
 
 ## 4. Automatic rules
@@ -165,10 +165,10 @@ All dates use UTC; timestamps without timezone are interpreted as UTC. `--since`
 
 ## 9. Report and future evidence
 
-Text, Markdown, JSON, and HTML show source, level basis, requirements and gaps, behavior counts, data quality, and limitations. HTML opens offline with source, method, and language switching. JSON v2 wraps separate and combined results in `reports`, includes program and ruleset versions, and uses null for Unknown. L5–L7 display both declaration status and the highest observed behavior level.
+Text, Markdown, JSON, and HTML show source, level basis, requirements and gaps, behavior counts, data quality, and limitations in English. HTML opens offline with source and method switching. JSON v2 wraps separate and combined results in `reports`, includes program and ruleset versions, and uses null for Unknown. L5–L7 display both declaration status and the highest observed behavior level.
 
 Improving validity requires auditable task outcomes such as `task_id`, `acceptance_criteria`, `completed`, `human_interventions`, `build_pass`, `test_pass`, `pr_created`, `ci_pass`, `tokens`, and `wall_time`. Completion, failure recovery, task cost, intervention, and improvement effects should be computed only with suitable evidence; this level ruleset does not invent those scores.
 
 ## 10. Sources and the second assessment
 
-The levels and numeric thresholds are project heuristics, not a validated unified standard. [REFERENCES.md](REFERENCES.md) explains what Anthropic, SWE-bench, METR, SPACE, DORA, and DeepMind support and what they do not. A default run also includes the independent [Anthropic method assessment](ANTHROPIC_EVALUATION.md). It does not reuse L0–L7 call counts, declarations, or cumulative gates. Missing task outcomes produce insufficient evidence; explicit `--eval-results` can supply task records. The view is not Anthropic certification, and local evidence checking is not independent audit.
+The levels and numeric thresholds are project heuristics, not a validated unified standard. [REFERENCES.md](REFERENCES.md) explains what Anthropic, SWE-bench, METR, SPACE, DORA, and DeepMind support and what they do not. A default run also includes the independent [Anthropic method assessment](ANTHROPIC.md). It does not reuse L0–L7 call counts, declarations, or cumulative gates. Missing task outcomes produce insufficient evidence; explicit `--eval-results` can supply task records. The view is not Anthropic certification, and local evidence checking is not independent audit.

@@ -1,3 +1,10 @@
 __pycache__/
 *.pyc
 /reports/
+/out/agent_level/
+/.venv/
+*.egg-info/
+/build/
+/dist/
+/.codex/
+/.claude/
