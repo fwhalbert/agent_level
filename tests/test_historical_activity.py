@@ -134,7 +134,8 @@ class TestHistory(TempCase):
             rc, output, err = self.cli(['--source', 'codex', '--codex-dir', str(self.root), '--project-dir', str(self.project), '--format', fmt])
             self.assertEqual(rc, 0, err)
             self.assertNotIn('PRIVATE_', output)
-            self.assertNotRegex(output, r'[\u3400-\u4dbf\u4e00-\u9fff]')
+            if fmt != 'html':
+                self.assertNotRegex(output, r'[\u3400-\u4dbf\u4e00-\u9fff]')
             if fmt == 'json':
                 report = json.loads(output)['reports']['codex']
                 self.assertTrue(report['project_filter']['enabled'])
@@ -143,7 +144,7 @@ class TestHistory(TempCase):
                 self.assertIn('Historical activity', output)
                 self.assertIn('successful returns', output)
             if fmt == 'html':
-                self.assertIn('<option value="both" selected>', output)
+                self.assertIn('<option value="levels" selected ', output)
 
     def test_project_scope_rejects_missing_directory_or_unscoped_task_import(self):
         self.assertEqual(self.cli(['--project-dir', str(self.root/'missing'), '--format', 'json'])[0], 2)

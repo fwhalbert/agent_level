@@ -71,7 +71,7 @@ class TestProjectEvidence(TempCase):
                 self.assertNotIn('PRIVATE_', output)
                 if fmt == 'json':
                     result = json.loads(output)['reports']['codex']
-                    self.assertIsNone(result['current_level'])
+                    self.assertEqual(result['current_level'], 0)
                     self.assertEqual(result['anthropic_evaluation']['counts']['verified_trials'], 1)
                 else:
                     self.assertIn('Anthropic', output)

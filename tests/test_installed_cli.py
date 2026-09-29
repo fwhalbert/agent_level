@@ -51,8 +51,8 @@ class TestInstalledCLI(unittest.TestCase):
             run(sys.executable, str(source / 'bootstrap.py'), '--project-dir', str(workspace))
             self.assertEqual([path.read_bytes() for path in configs], before)
             bin_dir = venv / 'bin'
-            self.assertEqual(run(str(bin_dir / 'agent-level-assess'), '--version').strip(), '2.4.0')
-            self.assertEqual(run(str(bin_dir / 'agent_level_assess.py'), '--version').strip(), '2.4.0')
+            self.assertEqual(run(str(bin_dir / 'agent-level-assess'), '--version').strip(), '1.0.0')
+            self.assertEqual(run(str(bin_dir / 'agent_level_assess.py'), '--version').strip(), '1.0.0')
             notice = run(str(bin_dir / 'agent-level-session-notice'),
                          input=json.dumps({'source': 'startup', 'cwd': str(workspace)}))
             self.assertEqual(json.loads(notice)['systemMessage'], 'Auto eval enabled.')

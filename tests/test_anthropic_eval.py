@@ -28,14 +28,12 @@ def data(*tasks):
 
 
 class TestAnthropic(TempCase):
-    def test_logs_and_l7_declarations_never_become_outcomes(self):
+    def test_logs_never_become_task_outcomes(self):
         m = Metrics()
         m.tool_calls, m.humanish_user, m.edit_calls = 1000, 10, 8
         m.engineering_sessions.update(('a', 'b', 'c'))
         m.engineering_days.update(('2026-09-09', '2026-09-10'))
-        cfg = {key: True for key in A.ALL_FLAG_KEYS}
-        cfg['human_interventions_per_task'] = 0
-        self.assertEqual(A.evaluate(m, cfg)['current'], 7)
+        self.assertEqual(A.evaluate(m)['current'], 4)
         r = assess(m)
         self.assertEqual(r['status'], 'insufficient_evidence')
         self.assertEqual(r['counts']['graded_trials'], 0)
@@ -228,7 +226,7 @@ class TestAnthropic(TempCase):
         path.write_text(json.dumps(data(task())), encoding='utf-8')
         for fmt in ('json', 'txt', 'md', 'html'):
             rc, output, _ = self.cli(['--source', 'claude', '--claude-dir', str(self.root),
-                                     '--eval-results', str(path), '--format', fmt, '--no-auto-config'])
+                                     '--eval-results', str(path), '--format', fmt])
             self.assertEqual(rc, 0)
             self.assertNotIn('PRIVATE_', output)
             self.assertIn('Anthropic', output)
@@ -243,7 +241,7 @@ class TestAnthropic(TempCase):
                                  '--eval-results', str(path), '--format', 'json'])
         self.assertEqual(rc, 0)
         r = json.loads(output)['reports']['codex']
-        self.assertIsNone(r['current_level'])
+        self.assertEqual(r['current_level'], 0)
         self.assertEqual(r['anthropic_evaluation']['groups'][0]['pass_at_1'], .75)
 
     def test_invalid_file_schema_and_k_have_explicit_errors(self):
@@ -259,14 +257,14 @@ class TestAnthropic(TempCase):
     def test_html_methods_sources_references_and_no_external_loading(self):
         self.codex([message('user')])
         rc, output, _ = self.cli(['--claude-dir', str(self.root), '--codex-dir', str(self.root),
-                                 '--format', 'html', '--no-auto-config'])
+                                 '--format', 'html'])
         self.assertEqual(rc, 0)
         self.assertIn('id="assessment-method"', output)
         self.assertEqual(output.count('data-method-view="anthropic"'), 3)
         self.assertEqual(output.count('data-method-view="levels"'), 3)
         self.assertEqual(output.count('data-method-view="improvement"'), 3)
         self.assertIn('value="both"', output)
-        self.assertIn('Research and official references', output)
+        self.assertIn('References · 7 items', output)
         self.assertIn('Insufficient evidence', output)
         self.assertNotIn('src="https://', output)
         self.assertNotIn('fetch(', output)

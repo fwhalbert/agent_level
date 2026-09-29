@@ -1,8 +1,8 @@
 # Anthropic Method Assessment and Result Import
 
-Program 2.4.0 / method implementation 1.1. One run produces an **L0–L7 heuristic view**, an **Anthropic-style task evaluation**, and an optional **local self-improvement comparison**. HTML can show each view or all views, by source. The improvement comparison is documented in [IMPROVEMENT_EVALUATION.md](IMPROVEMENT_EVALUATION.md).
+Program 1.0.0 / method implementation 1.1. One run produces an **L0–L7 heuristic view**, an **Anthropic-style task evaluation**, and an optional **local self-improvement comparison**. HTML can show each view or all views, by source. The improvement comparison is documented in [IMPROVEMENT_EVALUATION.md](IMPROVEMENT_EVALUATION.md).
 
-Official sources reviewed 2026-09-23:
+Official sources:
 
 - [Anthropic, “Demystifying evals for AI agents”](https://www.anthropic.com/engineering/demystifying-evals-for-ai-agents), 2026-01-09: the primary source for agent task, trial, grader, transcript, outcome, repeated-run, and harness concepts.
 - [Claude Platform Docs, “Define success criteria and build evaluations”](https://platform.claude.com/docs/en/test-and-evaluate/develop-tests): guidance on explicit criteria and code, human, and model grading.
@@ -43,7 +43,7 @@ agent-level-assess --project-dir /path/to/workspace -o reports/workspace-history
 agent-level-assess --project-dir /path/to/workspace/repos/example-project --days 30
 ```
 
-Project matching uses log `cwd` in the selected directory and descendants. It excludes similarly named siblings and diagnoses records with no working directory; it does not guess from transcript text. Codex updates the directory at `turn_context`; Claude uses the recorded directory and carries it forward within a file. Project mode skips the global Claude stats cache and automatic current-directory self-report config. It finds `.codex/agent-eval/tasks/*/results.json` and `.claude/agent-eval/tasks/*/results.json` in the project or ancestors, filters by task `repo`, and checks local evidence. `--no-auto-evals` keeps only log analysis. `--eval-results` cannot be combined with project mode, preventing accidental import of another project's task data.
+Project matching uses log `cwd` in the selected directory and descendants. It excludes similarly named siblings and diagnoses records with no working directory; it does not guess from transcript text. Codex updates the directory at `turn_context`; Claude uses the recorded directory and carries it forward within a file. Project mode skips the global Claude stats cache. It finds `.codex/agent-eval/tasks/*/results.json` and `.claude/agent-eval/tasks/*/results.json` in the project or ancestors, filters by task `repo`, and checks local evidence. `--no-auto-evals` keeps only log analysis. `--eval-results` cannot be combined with project mode, preventing accidental import of another project's task data.
 
 HTML includes “Historical activity · Completion signals”; JSON uses `anthropic_evaluation.historical_activity`:
 
@@ -62,7 +62,7 @@ agent-level-assess --eval-results ./evidence/results.json --evidence-root ./evid
 agent-level-assess --eval-results ./evidence/results.json --eval-k 5 --days 30
 ```
 
-Import without `--evidence-root` is marked unchecked. With it, each trial's files, hashes, grader content, and artifact links are checked; mismatches become unknown. This is not an independent audit. `--config` affects only L0–L7 and cannot supply task outcomes. Import also works without local session directories; L0–L7 then shows Unknown.
+Import without `--evidence-root` is marked unchecked. With it, each trial's files, hashes, grader content, and artifact links are checked; mismatches become unknown. This is not an independent audit. Task outcomes do not change the log-derived engineering level. Import also works without local session directories; L0–L7 then defaults to L0.
 
 ## Data protocol 1.1 (compatible with 1.0)
 

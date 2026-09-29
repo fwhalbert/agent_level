@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Regression tests for assess.py.
 
@@ -19,9 +18,8 @@ import unittest
 from pathlib import Path
 
 import assess as A
+from assessment.logs import classify_bash, is_human_input, DELEGATION_TOOLS
 
-
-# ---------------------------------------------------------------- fixtures
 
 def assistant(tools=(), cache_read=0, cache_creation=0, out=0, sidechain=False,
               ts="2026-09-10T10:00:00.000Z"):
@@ -69,24 +67,10 @@ def write_dir(records_by_file, stats=None) -> Path:
     return root
 
 
-def assess(root, cfg=None):
+def assess(root):
     m = A.scan(Path(root))
-    return m, A.evaluate(m, A.load_config(cfg))
+    return m, A.evaluate(m)
 
-
-FULL_L5 = {k: True for k, _ in A.L5_FLAGS}
-FULL_L5["human_interventions_per_task"] = 0.5
-FULL_L6 = {k: True for k, _ in A.L6_FLAGS}
-FULL_L7 = {k: True for k, _ in A.L7_FLAGS}
-
-
-def cfg_file(d):
-    p = Path(tempfile.mkdtemp(prefix="assessment-cfg-")) / "ai-level-evidence.json"
-    p.write_text(json.dumps(d), encoding="utf-8")
-    return p
-
-
-# ---------------------------------------------------------------- tests
 
 class TestBashClassifier(unittest.TestCase):
     CASES = [
@@ -111,66 +95,66 @@ class TestBashClassifier(unittest.TestCase):
 
     def test_cases(self):
         for cmd, want in self.CASES:
-            self.assertEqual(A.classify_bash(cmd), want, msg=cmd)
+            self.assertEqual(classify_bash(cmd), want, msg=cmd)
 
     def test_prefixes_stripped(self):
-        self.assertEqual(A.classify_bash("sudo make install"), "build")
-        self.assertEqual(A.classify_bash("timeout 110 python3 x.py"), "python")
-        self.assertEqual(A.classify_bash("cd /repo && pytest"), "test")
-        self.assertEqual(A.classify_bash("FOO=1 BAR=2 node a.js"), "node")
+        self.assertEqual(classify_bash("sudo make install"), "build")
+        self.assertEqual(classify_bash("timeout 110 python3 x.py"), "python")
+        self.assertEqual(classify_bash("cd /repo && pytest"), "test")
+        self.assertEqual(classify_bash("FOO=1 BAR=2 node a.js"), "node")
 
     def test_heredoc_body_ignored(self):
         # Heredoc bodies are data, not build commands.
         self.assertEqual(
-            A.classify_bash("cat > build.sh <<'EOF'\n#!/bin/bash\nmake -j\nEOF"), "read")
+            classify_bash("cat > build.sh <<'EOF'\n#!/bin/bash\nmake -j\nEOF"), "read")
         self.assertEqual(
-            A.classify_bash("python3 - <<'PY'\nimport re\ngit status\nPY"), "python")
+            classify_bash("python3 - <<'PY'\nimport re\ngit status\nPY"), "python")
 
     def test_highest_priority_wins(self):
-        self.assertEqual(A.classify_bash("grep -n x f && make && pytest"), "test")
-        self.assertEqual(A.classify_bash("make -s rebuild && make -s run"), "test")
+        self.assertEqual(classify_bash("grep -n x f && make && pytest"), "test")
+        self.assertEqual(classify_bash("make -s rebuild && make -s run"), "test")
 
     def test_delegation_tools_match_spec(self):
-        self.assertTrue({"Task", "Agent", "Workflow", "spawn_agent"} <= A.DELEGATION_TOOLS)
+        self.assertTrue({"Task", "Agent", "Workflow", "spawn_agent"} <= DELEGATION_TOOLS)
 
 
 class TestHumanFilter(unittest.TestCase):
     def test_plain_text_is_human(self):
-        self.assertTrue(A.is_human_input(user("Help me fix this bug")))
+        self.assertTrue(is_human_input(user("Help me fix this bug")))
 
     def test_tool_result_is_not(self):
-        self.assertFalse(A.is_human_input(tool_result()))
+        self.assertFalse(is_human_input(tool_result()))
 
     def test_sidechain_and_meta_are_not(self):
-        self.assertFalse(A.is_human_input(user("x", sidechain=True)))
-        self.assertFalse(A.is_human_input(user("x", meta=True)))
+        self.assertFalse(is_human_input(user("x", sidechain=True)))
+        self.assertFalse(is_human_input(user("x", meta=True)))
 
     def test_ide_notification_is_not(self):
-        self.assertFalse(A.is_human_input(user(
+        self.assertFalse(is_human_input(user(
             "<ide_opened_file>The user opened /a/b.c in the IDE.</ide_opened_file>")))
 
     def test_local_command_stdout_is_not(self):
-        self.assertFalse(A.is_human_input(user(
+        self.assertFalse(is_human_input(user(
             "<local-command-stdout>Set model to Opus</local-command-stdout>")))
 
     def test_system_reminder_only_is_not(self):
-        self.assertFalse(A.is_human_input(user("<system-reminder>note</system-reminder>")))
+        self.assertFalse(is_human_input(user("<system-reminder>note</system-reminder>")))
 
     def test_slash_command_is_human(self):
-        self.assertTrue(A.is_human_input(user(
+        self.assertTrue(is_human_input(user(
             "<command-name>/model</command-name><command-args></command-args>")))
 
     def test_real_text_beside_ide_noise_is_human(self):
-        self.assertTrue(A.is_human_input(user(
+        self.assertTrue(is_human_input(user(
             "<ide_opened_file>x</ide_opened_file>\nContinue fixing the tests")))
 
     def test_image_block_is_human(self):
         rec = user("")
         rec["message"]["content"] = [{"type": "image", "source": {}}]
-        self.assertTrue(A.is_human_input(rec))
+        self.assertTrue(is_human_input(rec))
 
     def test_assistant_record_is_not(self):
-        self.assertFalse(A.is_human_input(assistant()))
+        self.assertFalse(is_human_input(assistant()))
 
 
 class TestMetrics(unittest.TestCase):
@@ -294,7 +278,7 @@ class TestLevels(unittest.TestCase):
     def test_l0_no_data(self):
         root = self._l0()
         _, r = assess(root)
-        self.assertIsNone(r["current"])
+        self.assertEqual(r["current"], 0)
         shutil.rmtree(root)
 
     def test_l1_chat_only(self):
@@ -344,42 +328,7 @@ class TestLevels(unittest.TestCase):
         root = self._l4()
         _, r = assess(root)
         self.assertEqual(r["current"], 4)
-        self.assertEqual(len(r["gaps"]), 5)  # 4 flags + interventions
-        _, r2 = assess(root, cfg_file({"l5": FULL_L5}))
-        self.assertEqual(r2["current"], 5)
-        shutil.rmtree(root)
-
-    def test_l5_blocked_by_intervention_rate(self):
-        root = self._l4()
-        cfg = dict(FULL_L5, human_interventions_per_task=1.4)
-        _, r = assess(root, cfg_file({"l5": cfg}))
-        self.assertEqual(r["current"], 4)
-        shutil.rmtree(root)
-
-    def test_l5_evidence_cannot_skip_l4(self):
-        """Cumulative gates prevent L5–L7 declarations from bypassing observed L2 behavior."""
-        root = self._l2()
-        _, r = assess(root, cfg_file({"l5": FULL_L5, "l6": FULL_L6, "l7": FULL_L7}))
-        self.assertEqual(r["current"], 2)
-        self.assertEqual(r["status"][5], "NOT VERIFIED")
-        self.assertEqual(r["status"][7], "NOT VERIFIED")
-        shutil.rmtree(root)
-
-    def test_l6_and_l7(self):
-        root = self._l4()
-        _, r6 = assess(root, cfg_file({"l5": FULL_L5, "l6": FULL_L6}))
-        self.assertEqual(r6["current"], 6)
-        _, r7 = assess(root, cfg_file({"l5": FULL_L5, "l6": FULL_L6, "l7": FULL_L7}))
-        self.assertEqual(r7["current"], 7)
-        self.assertEqual(r7["next"], 7)
-        self.assertEqual(r7["gaps"], [])
-        shutil.rmtree(root)
-
-    def test_flat_config_accepted(self):
-        root = self._l4()
-        flat = dict(FULL_L5)
-        _, r = assess(root, cfg_file(flat))
-        self.assertEqual(r["current"], 5)
+        self.assertEqual(len(r["gaps"]), 5)
         shutil.rmtree(root)
 
 
@@ -400,9 +349,9 @@ class TestRenderPrivacy(unittest.TestCase):
         shutil.rmtree(self.root)
 
     def _outputs(self):
-        return [A.render_text(self.m, self.res, None, None, None),
-                A.render_md(self.m, self.res, None, None, None),
-                A.render_json(self.m, self.res, None, None, None)]
+        report = A.build_report(self.m, self.res, None, None)
+        return [A.render_report(report), A.render_report(report, markdown=True),
+                json.dumps(report)]
 
     def test_no_secrets_in_any_format(self):
         for out in self._outputs():
@@ -414,45 +363,22 @@ class TestRenderPrivacy(unittest.TestCase):
         self.assertEqual(self.m.bash["search"], 1)
 
     def test_json_is_valid_and_has_contract_keys(self):
-        d = json.loads(A.render_json(self.m, self.res, None, None, None))
+        d = json.loads(self._outputs()[-1])
         for k in ("current_level", "next_target", "long_target", "observed",
                   "levels", "gaps", "stats_cache"):
             self.assertIn(k, d)
         self.assertEqual(d["long_target"], 7)
 
     def test_zero_count_verification_is_preserved_in_json(self):
-        report = A.build_report(self.m, self.res, None, None, None)
+        report = A.build_report(self.m, self.res, None, None)
         self.assertEqual(report['observed']['bash']['test'], 0)
         self.assertEqual(report['observed']['verification_calls'], 0)
 
     def test_text_report_has_spec_sections(self):
-        out = A.render_text(self.m, self.res, None, None, None)
+        out = A.render_report(A.build_report(self.m, self.res, None, None))
         for token in ("Current Level", "Next Target", "Anthropic", "Observed",
                       "L3 Agent Coding", "L7 Recursive SI"):
             self.assertIn(token, out)
-
-
-class TestConfigContract(unittest.TestCase):
-    def test_init_config_has_exactly_the_spec_keys(self):
-        spec_l5 = {k for k, _ in A.L5_FLAGS} | {A.L5_NUMERIC[0]}
-        spec_l6 = {k for k, _ in A.L6_FLAGS}
-        spec_l7 = {k for k, _ in A.L7_FLAGS}
-        self.assertEqual(set(A.DEFAULT_CONFIG["l5"]), spec_l5)
-        self.assertEqual(set(A.DEFAULT_CONFIG["l6"]), spec_l6)
-        self.assertEqual(set(A.DEFAULT_CONFIG["l7"]), spec_l7)
-
-    def test_missing_config_defaults_to_no_evidence(self):
-        with contextlib.redirect_stderr(io.StringIO()):
-            cfg = A.load_config(Path("/definitely/not/here.json"))
-        self.assertFalse(any(v for k, v in cfg.items()
-                             if k != A.L5_NUMERIC[0]))
-
-    def test_unparsable_config_does_not_crash(self):
-        p = Path(tempfile.mkdtemp()) / "bad.json"
-        p.write_text("{{{", encoding="utf-8")
-        with contextlib.redirect_stderr(io.StringIO()):
-            cfg = A.load_config(p)
-        self.assertFalse(cfg["autonomous_pr"])
 
 
 def run_main(argv):
@@ -467,31 +393,19 @@ class TestCLI(unittest.TestCase):
     def test_main_runs_all_formats(self):
         root = write_dir({"a.jsonl": [user("hi"), assistant()]})
         for fmt in ("text", "md", "json"):
-            rc, out = run_main(["--claude-dir", str(root), "--format", fmt,
-                                "--no-auto-config"])
+            rc, out = run_main(["--claude-dir", str(root), "--format", fmt])
             self.assertEqual(rc, 0)
             self.assertTrue(out.strip())
         shutil.rmtree(root)
 
-    def test_missing_dir_exits_2(self):
-        self.assertEqual(run_main(["--claude-dir", "/nope/nothing"])[0], 2)
+    def test_missing_dir_still_produces_report(self):
+        self.assertEqual(run_main(["--claude-dir", "/nope/nothing"])[0], 0)
 
     def test_days_conflicts_with_since(self):
         self.assertEqual(run_main(["--days", "7", "--since", "2026-09-01"])[0], 2)
 
     def test_bad_date_exits_2(self):
         self.assertEqual(run_main(["--since", "09/01/2026"])[0], 2)
-
-    def test_init_config_writes_spec_keys(self):
-        d = Path(tempfile.mkdtemp())
-        self.assertEqual(run_main(["--init-config", str(d / "ai-level-evidence.json")])[0], 0)
-        data = json.loads((d / "ai-level-evidence.json").read_text(encoding="utf-8"))
-        self.assertIn("persistent_task_pickup", data["l5"])
-        # Do not overwrite existing files.
-        self.assertEqual(run_main(["--init-config", str(d / "ai-level-evidence.json")])[0], 1)
-        self.assertEqual(run_main(["--init-config", str(d / "ai-level-evidence.json"),
-                                   "--force"])[0], 0)
-        shutil.rmtree(d)
 
 
 if __name__ == "__main__":

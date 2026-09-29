@@ -1,3 +1,9 @@
+# Repository version policy
+
+This section applies only when modifying the `agent_level` tool itself, not to workspaces importing the task evidence workflow below.
+
+Keep the project at **v1**: package and CLI version `1.0.0`, L0–L7 ruleset version `1.0`. Do not bump these versions unless the user explicitly requests an upgrade. Keep code, package metadata, documentation, tests, and release commit messages consistent with this policy.
+
 <!-- agent-level:task-evidence:start -->
 # Automatic Task Evidence
 

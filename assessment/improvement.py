@@ -1,4 +1,4 @@
-"""Compare controlled before/after task results without trusting self-reported L6 flags.
+"""Compare controlled before/after task results on frozen tasks and graders.
 
 This is an evidence consistency check, not an independent execution or a causal
 claim. An assessor outside the improving agent must control the holdout suite,
@@ -31,7 +31,7 @@ def _cohort(task, reader, since, until):
     outcomes, autonomous, grader_versions = [], [], None
     artifacts, traces = set(), set()
     for trial in trials:
-        if (not isinstance(trial, dict) or trial.get('status') != 'completed'
+        if (trial.get('status') != 'completed'
                 or trial.get('transcript_kind') != 'session_export'
                 or trial.get('task_id') != task['task_id']):
             return None
@@ -95,9 +95,10 @@ def _spec_digest(tasks):
 
 def assess(data=None, evidence_reader=None, sources=None, since=None, until=None):
     comparisons = data.get('improvement_comparisons', []) if isinstance(data, dict) else []
-    if not isinstance(comparisons, list):
-        return {'status': 'invalid_input', 'comparisons': [], 'diagnostics': {'invalid_comparisons': 1}}
     rows, diagnostics = [], {}
+    if not isinstance(comparisons, list):
+        diagnostics['invalid_comparisons'] = 1
+        comparisons = []
     tasks = data.get('tasks', []) if isinstance(data, dict) else []
     source_set = set(sources or ('claude', 'codex'))
     for comparison in comparisons:
@@ -237,8 +238,10 @@ def assess(data=None, evidence_reader=None, sources=None, since=None, until=None
 def render_summary(report, markdown=False):
     heading = '## ' if markdown else ''
     lines = [heading + 'Local self-improvement comparison', '']
-    if not report['comparisons']:
-        lines.append('No predefined controlled before/after comparison is available. L6 self-reports do not prove improvement.')
+    if report['diagnostics']:
+        lines.append('Invalid improvement comparison records: ' + str(report['diagnostics']['invalid_comparisons']))
+    elif not report['comparisons']:
+        lines.append('No predefined controlled before/after comparison is available.')
     for row in report['comparisons']:
         lines.append(f"{row['label']} ({row['source']}): {row['status']}")
         if row['reason']:

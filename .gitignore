@@ -8,3 +8,6 @@ __pycache__/
 /dist/
 /.codex/
 /.claude/
+
+.pytest_cache/
+/venv/

@@ -1,6 +1,6 @@
 # Local self-improvement comparison
 
-This repository can now compare a workflow before and after an agent changes a prompt, tool, or workflow. The comparison answers a narrow question: **did the changed version complete more of the same local tasks without corrective human intervention, while preserving task success?** It is a project-defined method, not an OpenAI or Anthropic level standard.
+This repository compares a workflow before and after an agent changes a prompt, tool, or workflow. The comparison answers a narrow question: **did the changed version complete more of the same local tasks without corrective human intervention, while preserving task success?** It is a project-defined method, not an OpenAI or Anthropic level standard.
 
 ## How to obtain independent evidence
 
@@ -58,4 +58,4 @@ For each task and version, the evaluator calculates ordinary success and **auton
 | `observed_gain` | Positive average without task regression; task-level sign test does not meet this project's p≤0.05 threshold. |
 | `supported_gain` | Complete locally checked evidence, positive average without task regression, and one-sided task-level sign test p≤0.05. |
 
-`supported_gain` is **not proof of independent execution or causality**. The JSON field `independent_execution_verified` remains `false`. Hashes establish consistency of supplied files, not that the holdout was secret, the evaluator was independent, the runs were isolated, the agent authored the change, or all attempted variants were reported. An outside evaluator must control those conditions and retain the raw evidence. The comparison is kept separate from the L0–L7 heuristic; it does not automatically promote a self-reported L6 declaration.
+`supported_gain` is **not proof of independent execution or causality**. The JSON field `independent_execution_verified` remains `false`. Hashes establish consistency of supplied files, not that the holdout was secret, the evaluator was independent, the runs were isolated, the agent authored the change, or all attempted variants were reported. An outside evaluator must control those conditions and retain the raw evidence. The comparison has its own result view. A supported comparison does not establish an engineering level. L5–L7 remain reference definitions; see the [log observation limits](AGENT_LEVEL_L0-L7.md).

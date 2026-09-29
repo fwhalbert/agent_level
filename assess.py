@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 assess.py — Local AI Engineering Assessment
 
@@ -10,7 +9,7 @@ Reads:
     <claude-dir>/stats-cache.json
     <codex-dir>/sessions/**/*.jsonl
     <codex-dir>/archived_sessions/**/*.jsonl
-    ai-level-evidence.json            (optional self-reported L5+ evidence)
+    project task records and explicitly imported task evidence
 
 Does not read: .credentials.json / .env / SSH key / API key
 Omits: raw prompts / source code / raw shell commands / tool arguments / file contents
@@ -23,8 +22,6 @@ Usage (after installing and activating the venv):
     agent-level-assess --format txt+html
     agent-level-assess --format md
     agent-level-assess --format json -o -
-    agent-level-assess --init-config
-    agent-level-assess --config ai-level-evidence.json
     agent-level-assess --since 2026-09-01 --until 2026-09-20
 """
 
@@ -32,7 +29,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import math
 import os
 import re
 import sys
@@ -41,9 +37,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from assessment.logs import (
-    Metrics, scan, scan_codex, merge_metrics, parse_date, classify_bash,
-    is_human_input, BASH_CATEGORY_ORDER,
-    HUMAN_FILTER_RULES, DELEGATION_TOOLS, usage_breakdown,
+    Metrics, scan, scan_codex, merge_metrics, parse_date, BASH_CATEGORY_ORDER,
+    HUMAN_FILTER_RULES, usage_breakdown,
 )
 
 from assessment.anthropic import assess as assess_anthropic, filter_evals, load_evals, render_summary
@@ -51,8 +46,8 @@ from assessment.improvement import assess as assess_improvement, render_summary 
 from assessment.references import REFERENCES, METHOD_NOTE
 from assessment.evidence import EvidenceReader
 
-VERSION = "2.4.0"
-RULESET_VERSION = "2.0"
+VERSION = "1.0.0"
+RULESET_VERSION = "1.0"
 DEFAULT_REPORT_NAME = "AI Engineering Assessment"
 
 
@@ -78,7 +73,6 @@ def scan_progress(source: str):
     return update
 
 LEVEL_NAMES = {
-    None: "Insufficient evidence",
     0: "Manual Engineering",
     1: "AI-assisted Coding",
     2: "Interactive AI Coding",
@@ -104,125 +98,16 @@ L3_MIN_TOOL_PER_HUMAN = 3.0
 L4_MIN_ENGINEERING_SESSIONS = 3
 L4_MIN_ENGINEERING_DAYS = 2
 
-# L5 thresholds (specification section 4)
-L5_MAX_INTERVENTIONS_PER_TASK = 1.0
 
-# L5 / L6 / L7 evidence keys, in report order
-L5_FLAGS = [
-    ("persistent_task_pickup", "Persistent task pickup"),
-    ("autonomous_pr", "Autonomous PR"),
-    ("autonomous_ci_repair", "CI self-repair"),
-    ("task_outcome_tracking", "Task outcome tracking"),
-]
-L5_NUMERIC = ("human_interventions_per_task", "Human interventions/task <= 1")
-
-L6_FLAGS = [
-    ("outcome_driven_improvement", "Outcome-driven improvement"),
-    ("self_modify_prompts_tools_workflows", "Self-modify prompts/tools/workflows"),
-    ("automated_eval_before_rollout", "Automated eval before rollout"),
-    ("rollback_supported", "Rollback supported"),
-]
-
-L7_FLAGS = [
-    ("autonomous_research_train_eval_deploy", "Autonomous research/train/eval/deploy"),
-    ("next_generation_system_iteration", "Next-generation system iteration"),
-    ("human_governance_gate", "Human governance gate"),
-]
-
-# --------------------------------------------------------------------------
-# Evidence configuration (ai-level-evidence.json)
-# --------------------------------------------------------------------------
-
-DEFAULT_CONFIG = {
-    "_about": "L5–L7 self-reported evidence, not independently verified. In multi-source runs, top-level fields apply only to the combined view; put source-specific evidence under sources.claude or sources.codex.",
-    "_docs": "docs/AGENT_LEVEL_L0-L7.md",
-    "l5": {
-        "persistent_task_pickup": False,
-        "autonomous_pr": False,
-        "autonomous_ci_repair": False,
-        "task_outcome_tracking": False,
-        "human_interventions_per_task": None,
-    },
-    "l6": {
-        "outcome_driven_improvement": False,
-        "self_modify_prompts_tools_workflows": False,
-        "automated_eval_before_rollout": False,
-        "rollback_supported": False,
-    },
-    "l7": {
-        "autonomous_research_train_eval_deploy": False,
-        "next_generation_system_iteration": False,
-        "human_governance_gate": False,
-    },
+CAPABILITY_REQUIREMENTS = {
+    5: ('Persistent task pickup', 'Autonomous PR', 'CI self-repair',
+        'Task outcome tracking', 'Human interventions/task <= 1'),
+    6: ('Outcome-driven improvement', 'Self-modify prompts/tools/workflows',
+        'Automated eval before rollout', 'Rollback supported'),
+    7: ('Autonomous research/train/eval/deploy', 'Next-generation system iteration',
+        'Human governance gate'),
 }
 
-ALL_FLAG_KEYS = (
-    [k for k, _ in L5_FLAGS] + [L5_NUMERIC[0]]
-    + [k for k, _ in L6_FLAGS] + [k for k, _ in L7_FLAGS]
-)
-
-
-def load_config(path: Path | None, scope=None, allow_legacy=False) -> dict:
-    """Flatten evidence from nested level groups or a flat mapping."""
-    flat = {k: (None if k == L5_NUMERIC[0] else False) for k in ALL_FLAG_KEYS}
-    if path is None:
-        return flat
-    if not path.is_file():
-        print(f"[warn] config not found: {path}", file=sys.stderr)
-        return flat
-    try:
-        data = json.loads(path.read_text(encoding="utf-8", errors="replace"))
-    except (OSError, ValueError) as exc:
-        print(f"[warn] cannot parse config ({exc.__class__.__name__}); ignored",
-              file=sys.stderr)
-        return flat
-    if not isinstance(data, dict):
-        return flat
-
-    if scope is not None:
-        if scope == "combined":
-            data = data.get("combined", data)
-        else:
-            sources = data.get("sources", {})
-            if "sources" in data or not allow_legacy:
-                data = sources.get(scope, {}) if isinstance(sources, dict) else {}
-        if not isinstance(data, dict):
-            return flat
-
-    def absorb(d):
-        for k, v in d.items():
-            if k in flat:
-                if k == L5_NUMERIC[0]:
-                    valid = v is None or (type(v) in (int, float) and math.isfinite(v) and v >= 0)
-                else:
-                    valid = type(v) is bool
-                if valid:
-                    flat[k] = v
-                else:
-                    print(f"[warn] invalid evidence field: {k}; ignored", file=sys.stderr)
-    absorb(data)
-    for section in ("l5", "l6", "l7", "L5", "L6", "L7"):
-        sub = data.get(section)
-        if isinstance(sub, dict):
-            absorb(sub)
-    return flat
-
-
-def init_config(path: Path, force: bool) -> int:
-    if path.exists() and not force:
-        print(f"[skip] {path} already exists (use --force to overwrite)")
-        return 1
-    path.write_text(json.dumps(DEFAULT_CONFIG, indent=2, ensure_ascii=False) + "\n",
-                    encoding="utf-8")
-    print(f"[ok] wrote {path}")
-    print("     Edit the evidence fields, then run: "
-          f"python3 {Path(sys.argv[0]).name} --config {path.name}")
-    return 0
-
-
-# --------------------------------------------------------------------------
-# Assessment with cumulative gates (specification section 4)
-# --------------------------------------------------------------------------
 
 class Check:
     __slots__ = ("label", "ok", "detail")
@@ -240,8 +125,8 @@ def num(v, fmt="{:.2f}"):
     return "n/a" if v is None else fmt.format(v)
 
 
-def evaluate(m: Metrics, cfg: dict) -> dict:
-    """Ruleset 2: observed attempts up to L4, self-reported evidence above L4."""
+def evaluate(m: Metrics) -> dict:
+    """Derive L0–L4 from log observations; higher capabilities stay unverified."""
     gates = {
         3: [
             Check("tool_calls >= 50 (sample floor)", m.tool_calls >= L3_MIN_TOOL_CALLS, str(m.tool_calls)),
@@ -256,40 +141,34 @@ def evaluate(m: Metrics, cfg: dict) -> dict:
             Check("edit/verify activity across >= 2 UTC days", len(m.engineering_days) >= L4_MIN_ENGINEERING_DAYS, str(len(m.engineering_days))),
         ],
     }
-    hipt = cfg.get(L5_NUMERIC[0])
-    valid_rate = type(hipt) in (int, float) and math.isfinite(hipt) and 0 <= hipt <= L5_MAX_INTERVENTIONS_PER_TASK
-    gates[5] = [Check(label, cfg.get(key) is True, "self-reported evidence")
-                for key, label in L5_FLAGS]
-    gates[5].append(Check(L5_NUMERIC[1], valid_rate,
-                         num(hipt) if type(hipt) in (int, float) and math.isfinite(hipt) else "not recorded"))
-    gates[6] = [Check(label, cfg.get(key) is True, "self-reported evidence") for key, label in L6_FLAGS]
-    gates[7] = [Check(label, cfg.get(key) is True, "self-reported evidence") for key, label in L7_FLAGS]
-    current = 2 if m.edit_calls else (1 if m.assistant or m.humanish_user or m.tool_calls else None)
-    status, blocked = {}, False
-    for level in (3, 4, 5, 6, 7):
-        if not blocked and all(c.ok for c in gates[level]):
-            current = level
-            status[level] = "OBSERVED" if level <= 4 else "DECLARED"
-        else:
-            blocked = True
-            status[level] = "NOT VERIFIED"
-    observed = min(current, 4) if current is not None else None
-    next_level = min(current + 1, 7) if current is not None else None
-    gaps = [c for c in gates.get(next_level, []) if not c.ok] if next_level != current else []
+    observed = 2 if m.edit_calls else (1 if m.assistant or m.tool_calls else None)
+    for level in (3, 4):
+        if all(c.ok for c in gates[level]) and observed == level - 1:
+            observed = level
+    gates[0] = [Check("L0 baseline", True, "Achieved by default")]
+    gates[1] = [Check("AI assistance or investigation", observed is not None)]
+    gates[2] = [Check("AI code edits", bool(m.edit_calls))]
+    for level, labels in CAPABILITY_REQUIREMENTS.items():
+        gates[level] = [Check(label, False, "Not assessed from session logs") for label in labels]
+    current = observed if observed is not None else 0
+    status = {level: 'DEFAULT' if level == 0 else 'OBSERVED' if level <= current else 'NOT VERIFIED'
+              for level in range(8)}
+    next_level = current + 1
+    gaps = [c for c in gates[next_level] if not c.ok]
     note = None
-    if current is None:
-        note = "Insufficient data. Missing logs do not imply L0; L0 requires human confirmation that AI did not perform engineering work."
+    if current == 0:
+        note = "L0 is achieved by default. Logs are required to observe higher levels."
     elif current == 1:
-        note = "Only assistance or investigation was observed; these logs alone cannot distinguish L0 from L1."
+        note = "Assistance or investigation was observed; the logs do not establish completed engineering tasks."
     elif current == 2:
         note = "Code edits were observed, but the sample does not support L3; this is not a judgment of human ability."
     return {"gates": gates, "status": status, "current": current,
             "observed_level": observed, "next": next_level, "gaps": gaps,
-            "below_note": note, "basis": "self-reported" if current and current >= 5 else "observed",
+            "below_note": note, "basis": "default" if current == 0 else "observed",
             "limitations": [
                 "L0–L7 are project heuristics, not an industry certification or productivity ranking.",
                 "L3/L4 are candidate levels based on log behavior; running a build/test after an edit does not prove it passed or that the task was completed.",
-                "L5–L7 rely on self-reported evidence and need task outcomes, evaluations, and human audit.",
+                "L5–L7 are reference definitions only. Session logs and task acceptance results do not establish these capabilities.",
                 "Message and tool formats vary by client; assistant/human and delegation counts are not hard thresholds.",
             ]}
 
@@ -297,10 +176,6 @@ def evaluate(m: Metrics, cfg: dict) -> dict:
 def level_label(level):
     return "Unknown" if level is None else f"L{level}"
 
-
-# --------------------------------------------------------------------------
-# Report output (specification section 9)
-# --------------------------------------------------------------------------
 
 def window_str(m: Metrics, since, until):
     if m.first_ts and m.last_ts:
@@ -346,7 +221,8 @@ def render_report(report, markdown=False):
         lines.append(f"- {label}: {observed[key]}")
     lines.extend(['', heading('Level gates')])
     for key, gate in report['levels'].items():
-        lines.append(f"{LEVEL_SHORT[int(key[1:])]} — {gate['status']}")
+        title = LEVEL_SHORT.get(int(key[1:])) or f'{key} {LEVEL_NAMES[int(key[1:])]}'
+        lines.append(f"{title} — {gate['status']}")
         for check in gate['checks']:
             mark = 'x' if check['pass'] else ' '
             lines.append(f"- [{mark}] {check['check']} ({check['detail']})")
@@ -364,15 +240,7 @@ def render_report(report, markdown=False):
     return '\n'.join(lines)
 
 
-def render_text(m: Metrics, res: dict, since, until, cfg_path) -> str:
-    return render_report(build_report(m, res, since, until, cfg_path))
-
-
-def render_md(m: Metrics, res: dict, since, until, cfg_path) -> str:
-    return render_report(build_report(m, res, since, until, cfg_path), markdown=True)
-
-
-def build_report(m: Metrics, res: dict, since, until, cfg_path,
+def build_report(m: Metrics, res: dict, since, until,
                  report_name=DEFAULT_REPORT_NAME, task_filters=None) -> dict:
     opaque_calls = m.diagnostics['opaque_orchestrator_calls']
     return {
@@ -409,7 +277,6 @@ def build_report(m: Metrics, res: dict, since, until, cfg_path,
         "next_target": res["next"],
         "long_target": 7,
         "long_target_note": "L7 is a specialized research direction, not an upgrade target for every engineering team.",
-        "evidence_config": cfg_path,
         "scope": {
             "files_scanned": m.files_scanned,
             "files_with_data": m.files_with_data,
@@ -459,7 +326,7 @@ def build_report(m: Metrics, res: dict, since, until, cfg_path,
             f"L{lvl}": {
                 "status": res["status"][lvl],
                 "checks": [c.as_dict() for c in res["gates"][lvl]],
-            } for lvl in (3, 4, 5, 6, 7)
+            } for lvl in range(8)
         },
         "gaps": [c.as_dict() for c in res["gaps"]],
         "human_input_filter": HUMAN_FILTER_RULES,
@@ -470,14 +337,6 @@ def build_report(m: Metrics, res: dict, since, until, cfg_path,
     }
 
 
-def render_json(m: Metrics, res: dict, since, until, cfg_path) -> str:
-    return json.dumps(build_report(m, res, since, until, cfg_path), indent=2, ensure_ascii=False)
-
-
-# --------------------------------------------------------------------------
-# CLI
-# --------------------------------------------------------------------------
-
 def build_parser():
     p = argparse.ArgumentParser(description="Claude + Codex AI Engineering Assessment")
     p.add_argument("--source", choices=("claude", "codex", "all"), default="all")
@@ -486,7 +345,6 @@ def build_parser():
     p.add_argument("--codex-dir", default=os.environ.get("CODEX_HOME", "~/.codex"))
     p.add_argument("--project-dir", type=Path,
                    help="Analyze historical sessions in this project and its subdirectories using log cwd; does not run tasks")
-    p.add_argument("--config")
     p.add_argument("--eval-results", type=Path,
                    help="Optional task evaluation JSON, possibly containing improvement_comparisons; does not run referenced files")
     p.add_argument("--evidence-root", type=Path,
@@ -496,11 +354,8 @@ def build_parser():
     p.add_argument("--model", help="Filter task evaluation records by model (not historical L0-L7 logs)")
     p.add_argument("--reasoning-effort", "--effort", dest="reasoning_effort",
                    help="Filter task evaluation records by effort; legacy missing values use documented model defaults")
-    p.add_argument("--no-auto-config", action="store_true")
     p.add_argument("--no-auto-evals", action="store_true",
                    help="In project mode, analyze historical logs without reading task evaluation records")
-    p.add_argument("--init-config", nargs="?", const="ai-level-evidence.json")
-    p.add_argument("--force", action="store_true")
     p.add_argument("--format", choices=("txt+html", "txt", "text", "md", "json", "html"),
                    default="html", help="Default html (one file); txt+html writes both; text is an alias for txt")
     p.add_argument("--report-name", "--name", default=DEFAULT_REPORT_NAME,
@@ -521,12 +376,6 @@ def main(argv=None) -> int:
     if not report_name or not stem:
         print("[error] --report-name must contain letters or numbers", file=sys.stderr)
         return 2
-    if args.init_config is not None:
-        try:
-            return init_config(Path(args.init_config).expanduser(), args.force)
-        except OSError:
-            print("[error] cannot write config", file=sys.stderr)
-            return 2
     formats = ("txt", "html") if args.format == "txt+html" else (
         "txt" if args.format == "text" else args.format,
     )
@@ -553,10 +402,12 @@ def main(argv=None) -> int:
     if project_dir is not None and not project_dir.is_dir():
         print('[error] --project-dir must be an existing directory', file=sys.stderr)
         return 2
+    if args.no_auto_evals and args.eval_results is not None:
+        print('[error] --no-auto-evals cannot be combined with --eval-results', file=sys.stderr)
+        return 2
     if project_dir is not None and args.eval_results is not None:
         print('[error] --project-dir filters historical logs; task imports cannot be filtered by project; run --eval-results separately', file=sys.stderr)
         return 2
-    cfg_path = Path(args.config).expanduser() if args.config else None
     if args.eval_k < 1:
         print("[error] --eval-k must be >= 1", file=sys.stderr)
         return 2
@@ -580,19 +431,14 @@ def main(argv=None) -> int:
         return 2
     if discovery['enabled']:
         show_progress(f"Found {discovery['files']} project task records covering {discovery['tasks']} tasks")
-    if cfg_path is None and project_dir is None and not args.no_auto_config and Path("ai-level-evidence.json").is_file():
-        cfg_path = Path("ai-level-evidence.json")
     sources = ("claude", "codex") if args.source == "all" else (args.source,)
     collected = {}
     for source in sources:
         root = Path(getattr(args, source + "_dir")).expanduser()
         if not root.is_dir():
             print(f"[warn] {source} data directory not found", file=sys.stderr)
-            if eval_data is not None:
-                collected[source] = Metrics(source)
-                continue
-            if args.source != "all":
-                return 2
+            collected[source] = Metrics(source)
+            collected[source].project_filtered = project_dir is not None
             continue
         show_progress(f"Scanning {source} session logs…")
         started = time.monotonic()
@@ -602,25 +448,20 @@ def main(argv=None) -> int:
         show_progress(f"{source} scan complete: {metrics.files_scanned} files, "
                       f"{metrics.files_with_data} with data in the selected range, "
                       f"{time.monotonic() - started:.1f} seconds")
-    if not collected:
-        print("[error] no data directories found", file=sys.stderr)
-        return 2
     selected = {}
     if args.view in ("combined", "both") and args.source == "all":
         selected["combined"] = merge_metrics(collected.values())
     if args.view in ("separate", "both") or args.source != "all":
         selected.update(collected)
     reports = {}
-    shown_cfg = cfg_path.name if cfg_path else None
     task_filters = {'model': args.model, 'reasoning_effort': args.reasoning_effort}
     for name, metrics in selected.items():
         show_progress(f"Calculating {name} assessment…")
-        config = load_config(cfg_path, scope=name, allow_legacy=args.source != "all")
-        result = evaluate(metrics, config)
+        result = evaluate(metrics)
         result['anthropic_evaluation'] = assess_anthropic(metrics, eval_data, since, until, args.eval_k, evidence_reader)
         result['self_improvement_evaluation'] = assess_improvement(
             eval_data, evidence_reader, metrics.sources, since, until)
-        reports[name] = build_report(metrics, result, since, until, shown_cfg, report_name, task_filters)
+        reports[name] = build_report(metrics, result, since, until, report_name, task_filters)
     download_stem = args.output.stem if args.output and args.output != Path("-") else stem
     bundle = {"version": VERSION, "ruleset_version": RULESET_VERSION,
               "view": args.view, "report_name": report_name,
@@ -679,4 +520,4 @@ def project_cli():
 
 
 if __name__ == "__main__":
-    sys.exit(cli())
+    sys.exit(project_cli())

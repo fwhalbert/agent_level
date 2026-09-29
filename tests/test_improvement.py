@@ -155,3 +155,22 @@ class TestImprovement(TempCase):
         report = assess(self.fixture(), EvidenceReader(self.root), sources={'claude'})
         self.assertEqual(report['comparisons'], [])
         self.assertEqual(report['diagnostics'], {})
+
+    def test_invalid_comparisons_are_reported_in_every_format(self):
+        path = self.root / 'invalid-comparisons.json'
+        for comparisons in (None, {}, 'PRIVATE_INVALID_VALUE', [None]):
+            path.write_text(json.dumps({'schema_version': '1.1', 'tasks': [],
+                                        'improvement_comparisons': comparisons}))
+            for fmt in ('json', 'txt', 'md', 'html'):
+                with self.subTest(comparisons=comparisons, format=fmt):
+                    code, output, error = self.cli([
+                        '--source', 'codex', '--codex-dir', str(self.root / 'missing'),
+                        '--eval-results', str(path), '--format', fmt])
+                    self.assertEqual(code, 0, error)
+                    self.assertNotIn('PRIVATE_INVALID_VALUE', output)
+                    if fmt == 'json':
+                        report = json.loads(output)['reports']['codex']['self_improvement_evaluation']
+                        self.assertEqual(report['status'], 'invalid_input')
+                        self.assertEqual(report['diagnostics'], {'invalid_comparisons': 1})
+                    else:
+                        self.assertIn('Invalid improvement comparison records:', output)

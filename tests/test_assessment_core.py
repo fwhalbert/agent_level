@@ -15,7 +15,6 @@ import assess as A
 import assessment.logs as L
 from assessment.web import render_html
 from tests.test_level_assessment import assistant, user
-from tests import test_level_assessment as legacy
 
 
 def record(kind, payload, ts='2026-09-10T10:00:00Z'):
@@ -95,7 +94,7 @@ class TestCodex(TempCase):
                     call('functions.exec_command', {'cmd': 'uv run pytest'}, cid='call-2')])
         m = L.scan_codex(self.root)
         self.assertEqual((m.edit_calls, len(m.engineering_sessions)), (1, 1))
-        report = A.build_report(m, A.evaluate(m, {}), None, None, None)
+        report = A.build_report(m, A.evaluate(m), None, None)
         self.assertEqual(report['level_visibility']['status'], 'direct')
 
     def test_unrelated_sessions_do_not_form_workflow(self):
@@ -153,12 +152,12 @@ class TestCodex(TempCase):
         self.assertEqual(m.bash_total, 0)
         self.assertEqual((m.edit_calls, len(m.engineering_sessions)), (0, 0))
         self.assertEqual(m.diagnostics['opaque_orchestrator_calls'], 1)
-        report = A.build_report(m, A.evaluate(m, {}), None, None, None)
+        report = A.build_report(m, A.evaluate(m), None, None)
         self.assertEqual(report['current_level'], 1)
         self.assertEqual(report['level_visibility'], {
             'status': 'partial', 'opaque_orchestrator_calls': 1,
             'may_undercount_edits_and_verification': True})
-        html = render_html({'reports': {'codex': report}, 'ruleset_version': '2.0', 'merge_note': 'test'})
+        html = render_html({'reports': {'codex': report}, 'ruleset_version': '1.0', 'merge_note': 'test'})
         self.assertIn('This level reflects visible logs only', html)
 
 
@@ -167,33 +166,11 @@ class TestRulesAndMerge(TempCase):
         m = L.Metrics()
         m.tool_calls, m.assistant, m.humanish_user = 1000, 200, 10
         m.tools['Task'] = 100
-        self.assertEqual(A.evaluate(m, A.load_config(None))['current'], 1)
+        self.assertEqual(A.evaluate(m)['current'], 1)
 
-    def test_no_data_unknown(self):
-        self.assertIsNone(A.evaluate(L.Metrics(), {})['current'])
+    def test_no_data_defaults_to_l0(self):
+        self.assertEqual(A.evaluate(L.Metrics())['current'], 0)
 
-    def test_strings_and_negative_values_cannot_promote(self):
-        root = legacy.TestLevels._l4()
-        self.addCleanup(shutil.rmtree, root)
-        m = L.scan(root)
-        flags = A.L5_FLAGS + A.L6_FLAGS + A.L7_FLAGS
-        cfg = {k: 'false' for k, _ in flags}
-        cfg[A.L5_NUMERIC[0]] = 0.5
-        self.assertEqual(A.evaluate(m, cfg)['current'], 4)
-        cfg = {k: True for k, _ in flags}
-        for value in [-1, float('-inf'), float('inf'), float('nan'), True, '0.5']:
-            with self.subTest(value=value):
-                cfg[A.L5_NUMERIC[0]] = value
-                self.assertEqual(A.evaluate(m, cfg)['current'], 4)
-
-    def test_self_reported_not_verified(self):
-        root = legacy.TestLevels._l4()
-        self.addCleanup(shutil.rmtree, root)
-        cfg = {k: True for k, _ in A.L5_FLAGS + A.L6_FLAGS + A.L7_FLAGS}
-        cfg[A.L5_NUMERIC[0]] = 0
-        result = A.evaluate(L.scan(root), cfg)
-        self.assertEqual((result['current'], result['observed_level'], result['basis']), (7, 4, 'self-reported'))
-        self.assertEqual(result['status'][7], 'DECLARED')
 
     def test_merge_weights_ratios_and_unions_days(self):
         a, b = L.Metrics('claude'), L.Metrics('codex')
@@ -211,20 +188,6 @@ class TestRulesAndMerge(TempCase):
         a.edit_calls = 1
         b.bash['test'] = 10
         self.assertEqual(len(L.merge_metrics([a, b]).engineering_sessions), 0)
-
-    def test_config_scopes_are_isolated(self):
-        p = self.root / 'config.json'
-        p.write_text(json.dumps({'l5': {'autonomous_pr': True}, 'sources': {
-            'claude': {'l5': {'autonomous_pr': False}}, 'codex': {'l5': {'autonomous_pr': True}}}}))
-        self.assertTrue(A.load_config(p, scope='combined')['autonomous_pr'])
-        self.assertFalse(A.load_config(p, scope='claude', allow_legacy=True)['autonomous_pr'])
-        self.assertTrue(A.load_config(p, scope='codex')['autonomous_pr'])
-
-    def test_legacy_config_not_applied_to_both_sources(self):
-        p = self.root / 'config.json'
-        p.write_text(json.dumps({'l5': {'autonomous_pr': True}}))
-        self.assertFalse(A.load_config(p, scope='claude')['autonomous_pr'])
-        self.assertTrue(A.load_config(p, scope='claude', allow_legacy=True)['autonomous_pr'])
 
 
 class TestRobustness(TempCase):
@@ -279,7 +242,7 @@ class TestRobustness(TempCase):
 
     def test_date_validation_and_one_day_includes_only_today(self):
         self.write('projects/a.jsonl', [assistant(ts='2026-09-09T23:59:59Z'), assistant(ts='2026-09-10T00:00:00Z')])
-        base = ['--source', 'claude', '--claude-dir', str(self.root), '--no-auto-config']
+        base = ['--source', 'claude', '--claude-dir', str(self.root)]
         for args in [['--days', '0'], ['--days', '-1'], ['--days', '0', '--since', '2026-09-01'],
                      ['--since', '2026-09-20', '--until', '2026-09-01']]:
             self.assertEqual(self.cli(base + args)[0], 2)
@@ -296,7 +259,7 @@ class TestReports(TempCase):
     def fixture(self):
         self.write('claude/projects/a.jsonl', [user('PRIVATE_PROMPT'), assistant(tools=[('Bash', {'command': 'echo PRIVATE_COMMAND'})])])
         self.codex([message('user', 'PRIVATE_PROMPT'), call('apply_patch', 'PRIVATE_PATCH', custom=True)])
-        return ['--claude-dir', str(self.root / 'claude'), '--codex-dir', str(self.root), '--no-auto-config']
+        return ['--claude-dir', str(self.root / 'claude'), '--codex-dir', str(self.root)]
 
     def test_installed_command_defaults_to_current_project(self):
         cases = [
@@ -362,13 +325,24 @@ class TestReports(TempCase):
         self.assertNotIn('fetch(', html)
         self.assertIn('role="tab"', html)
 
-    def test_html_is_english_with_unique_control_targets(self):
+    def test_html_is_bilingual_with_unique_control_targets(self):
         rc, html, _ = self.cli(self.fixture() + ['--format', 'html'])
         self.assertEqual(rc, 0)
         self.assertIn('<html lang="en">', html)
         self.assertIn('Selected period:', html)
         self.assertIn('Evaluation trial coverage:', html)
-        self.assertNotRegex(html, r'[\u3400-\u4dbf\u4e00-\u9fff]')
+        self.assertIn('id="report-language"', html)
+        self.assertIn('data-zh="评估方式"', html)
+        self.assertIn('data-zh="等级要求与差距"', html)
+        self.assertIn('data-zh="日常任务验收"', html)
+        self.assertIn('data-zh="本地自我改进对照"', html)
+        self.assertEqual(re.findall(r'<button role="tab" id="tab-([^\"]+)"', html),
+                         ['claude', 'codex', 'combined'])
+        self.assertIn('<option value="levels" selected ', html)
+        self.assertNotIn('<option value="both" selected', html)
+        self.assertEqual(html.count('data-method-view="anthropic" hidden'), 3)
+        self.assertEqual(html.count('data-method-view="improvement" hidden'), 3)
+        self.assertNotIn('data-method-view="levels" hidden', html)
         self.assertEqual(html.count('<main'), 1)
         ids = re.findall(r'\bid="([^"]+)"', html)
         self.assertEqual(len(ids), len(set(ids)))
@@ -377,12 +351,13 @@ class TestReports(TempCase):
 
     def test_html_escapes_dynamic_content(self):
         m = L.Metrics()
-        result = A.evaluate(m, {})
-        report = json.loads(A.render_json(m, result, None, None, None))
+        result = A.evaluate(m)
+        report = A.build_report(m, result, None, None)
         report['note'] = '<script>alert("x")</script>'
-        html = render_html({'reports': {'claude': report}, 'ruleset_version': '2.0', 'merge_note': 'test'})
+        html = render_html({'reports': {'claude': report}, 'ruleset_version': '1.0', 'merge_note': 'test'})
         self.assertNotIn('<script>alert', html)
         self.assertIn('&lt;script&gt;', html)
+        self.assertIn('data-zh="&lt;script&gt;alert(&quot;x&quot;)&lt;/script&gt;"', html)
 
     def test_output_file_and_no_stdout(self):
         args = self.fixture()
@@ -460,7 +435,7 @@ class TestReports(TempCase):
         base = Path('out/agent_level/2026-09-21/team-project-review')
         self.assertFalse(base.with_suffix('.txt').exists())
         html = base.with_suffix('.html').read_text()
-        self.assertIn('<h1>Team &amp; Project Review</h1>', html)
+        self.assertRegex(html, r'<h1><span[^>]*>Team &amp; Project Review</span></h1>')
         self.assertIn('download="team-project-review.json"', html)
 
     def test_report_name_json_and_validation(self):
@@ -479,7 +454,7 @@ class TestReports(TempCase):
                                         '--format', 'html', '-o', str(path)])
         self.assertEqual((rc, output), (0, ''))
         html = path.read_text()
-        self.assertIn('<h1>Team Review</h1>', html)
+        self.assertRegex(html, r'<h1><span[^>]*>Team Review</span></h1>')
         self.assertIn('download="my-report.json"', html)
 
     def test_dual_format_stdout_requires_single_format(self):
@@ -498,7 +473,7 @@ class TestReports(TempCase):
         self.write('claude/projects/a.jsonl', [user('hi', ts='2026-09-10T10:00:00Z')])
         self.codex([message('user', ts='2026-09-12T10:00:00Z')])
         args = ['--claude-dir', str(self.root / 'claude'), '--codex-dir', str(self.root),
-                '--no-auto-config', '--format', 'html']
+                '--format', 'html']
         cases = [([], 'All logs (no date filter)', True),
                  (['--since', '2026-09-01', '--until', '2026-09-20'],
                   '2026-09-01 to 2026-09-20', True),
@@ -509,14 +484,14 @@ class TestReports(TempCase):
             with self.subTest(args=extra):
                 rc, html, _ = self.cli(args + extra)
                 self.assertEqual(rc, 0)
-                self.assertEqual(html.count('Selected period: ' + requested), 3)
+                self.assertEqual(html.count('>Selected period: ' + requested + '</span>'), 3)
                 if has_data:
                     for coverage in ('2026-09-10 to 2026-09-12',
                                      '2026-09-10 to 2026-09-10',
                                      '2026-09-12 to 2026-09-12'):
                         self.assertIn('Observed log coverage: ' + coverage + ' · UTC', html)
                 else:
-                    self.assertEqual(html.count('Observed log coverage: No valid timestamps'), 3)
+                    self.assertEqual(html.count('>Observed log coverage: No valid timestamps'), 3)
 
     def test_output_parent_is_file_exits_2(self):
         args = self.fixture()
@@ -530,9 +505,9 @@ class TestReports(TempCase):
     def test_missing_one_default_source_does_not_mask_existing(self):
         self.codex([message('user')])
         rc, output, _ = self.cli(['--source', 'all', '--claude-dir', str(self.root / 'missing'),
-                                  '--codex-dir', str(self.root), '--format', 'json', '--no-auto-config'])
+                                  '--codex-dir', str(self.root), '--format', 'json'])
         self.assertEqual(rc, 0)
-        self.assertEqual(set(json.loads(output)['reports']), {'combined', 'codex'})
+        self.assertEqual(set(json.loads(output)['reports']), {'combined', 'claude', 'codex'})
 
 
 if __name__ == '__main__':

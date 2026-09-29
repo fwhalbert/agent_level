@@ -1,139 +1,85 @@
 # AI Engineering Assessment
 
-Read local Claude Code and Codex logs and task evaluation evidence to produce workflow, task-outcome, and before/after improvement views. Requires Python 3.10+ and no runtime dependencies. A short Chinese introduction is available in [README.zh-CN.md](README.zh-CN.md).
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-| Method | Question answered | Output |
+**An open-source framework for empirical evaluation of AI-assisted software engineering.** Using local Claude Code and Codex session logs and task acceptance evidence, it examines AI agents in real engineering workflows across three dimensions: human–AI collaboration, task completion reliability, and the effects of workflow changes.
+
+The project turns engineering activity into traceable assessment results, helping developers, teams, and researchers identify the limits of automation, verify task delivery, and compare changes to prompts, tools, and collaboration workflows on fixed task suites. Local data processing and offline reports support continuous improvement and empirical research in AI-assisted engineering.
+
+## What it does
+
+- **Review your workflow:** estimate an L0–L7 candidate level, explain the evidence, and show missing requirements.
+- **Check task outcomes:** summarize successful, failed, unknown, and unrun tasks from registered acceptance checks.
+- **Compare changes:** examine before/after task results for versioned prompts, tools, or workflows on a fixed task suite.
+- **Explore usage:** view daily token usage, model shares, and cache usage, separately for Claude Code, Codex, or both.
+- **Keep reports local:** generate an offline English/中文 HTML report, or export text, Markdown, and JSON. Reports contain aggregates, not raw conversations or source code.
+
+Requires **Python 3.10+**; no third-party runtime dependencies. Existing logs are enough for a first workflow report. Task acceptance statistics require task records.
+
+## Supported methods and standards
+
+There is no unified industry standard behind these scores. The current implementation supports:
+
+| Method / protocol | What it answers | Current support |
 |---|---|---|
-| L0–L7 heuristic model | What engineering workflow is visible? | Candidate level, requirements, and next gaps |
-| Anthropic evaluation method | What evidence supports task outcomes and reliability? | Evidence status, acceptance rates, pass@1 / pass@k / pass^k |
-| Local improvement comparison | Did an agent's versioned workflow change improve autonomous task acceptance on a fixed suite? | Paired before/after rates, regressions, and evidence status |
+| Project-defined L0–L7 ruleset 1.0 | How is engineering work shared between humans and AI? | Default L0; log candidates for L1–L4; reference definitions for L5–L7 |
+| Anthropic-style agent evaluation | Did tasks meet explicit acceptance criteria, and how repeatable are the results? | Daily acceptance outcomes; pass@1, pass@k, and pass^k for complete controlled trial groups |
+| Local task result protocol 1.0 / 1.1 | How can task evidence be recorded and imported? | JSON import; 1.1 adds daily task records and optional improvement comparisons |
+| Project-defined improvement comparison | Did a workflow change improve autonomous task acceptance? | Paired before/after evidence on the same frozen tasks; regressions and evidence status |
 
-Anthropic does not define official L0–L7 levels. This tool keeps task outcome evaluation separate from its own level model. With logs but no task acceptance records, the second assessment reports insufficient evidence; tool calls are never converted into a success rate.
-The improvement comparison is also project-defined. It checks supplied evidence but cannot certify independent execution; an outside evaluator must control the holdout suite and runs.
+The Anthropic method is applied to both Claude Code and Codex evidence. Anthropic does **not** define this project's L0–L7 levels or certify its results. OpenAI evaluation guidance and research such as SWE-bench and METR are references, not additional implemented scoring standards. See [References](#references).
 
 ## Quick start
 
-To install the package and enable task evidence in a workspace with one command, run the following from this checkout. Replace `/path/to/workspace` with your workspace path:
+The commands below use **bash/zsh on Linux or macOS**, with Git and Python 3.10+ installed. Use the same terminal for all steps. Installation may need internet access to obtain Python build tools.
+
+Clone the tool and replace `workspace_dir` with the absolute path of the project you want to assess:
 
 ```bash
-python3 bootstrap.py --project-dir /path/to/workspace
-cd /path/to/workspace
-source .venv/bin/activate
+git clone https://github.com/fwhalbert/agent_level.git
+cd agent_level
+workspace_dir="/absolute/path/to/your-project"
+python3 bootstrap.py --project-dir "$workspace_dir" --venv "$workspace_dir/.venv"
+source "$workspace_dir/.venv/bin/activate"
+cd "$workspace_dir"
 agent-level-assess
 ```
 
-The bootstrap command uses an existing `project/venv`, or creates `project/.venv`; `--venv PATH` selects another environment. With no path, `--project-dir` selects the current directory. It installs this checkout in editable mode into the selected venv and adds `@/absolute/path/to/agent_level/AGENTS.md` to the workspace `AGENTS.md`. Rules are read from the source checkout rather than copied. Existing copied sections and older rule links are migrated to the reference, preserving surrounding project instructions. Keep the checkout available and rerun bootstrap after moving it. `CLAUDE.md` imports the workspace instructions through `@AGENTS.md`.
+Bootstrap installs the commands, links task recording instructions in `AGENTS.md` and `CLAUDE.md`, and configures session notice hooks. It preserves existing project instructions and adds the report directory to `.gitignore`.
 
-Bootstrap configures the optional session notice hooks without duplicating entries and updates the notice command when the selected venv changes. The hook follows instruction imports; it only announces that the workflow is enabled. Agents must read and follow the referenced workflow to record tasks. Codex may still require trust review for a new hook. The installed `agent-level-assess` command defaults to the current directory as its project, with `agent_level_assess.py` as an alias in the venv. Bootstrap removes unchanged project-root launchers generated by older versions and preserves custom scripts.
+Open the printed `file://` link in your browser. The offline report supports English/中文 and defaults to `out/agent_level/YYYY-MM-DD/ai-engineering-assessment.html`. Without matching logs, the level defaults to L0; task outcome statistics require acceptance records.
 
-To install only the command line tools, use pip directly:
+Start a new Claude Code or Codex session in the project and give it an engineering task. The agent follows the [recording workflow](AGENTS.md) to register acceptance criteria before work and record the check afterward. The hook only displays “Auto eval enabled.”; Codex may require review and trust in `/hooks`.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -e .
-agent-level-assess --project-dir /path/to/workspace
-```
-
-For an existing project venv, run `source /path/to/venv/bin/activate`, then `python3 -m pip install -e /path/to/agent_level`. Use `agent-level-assess` and `agent-level-record` after activation. The editable install follows changes in this checkout; use `pip install /path/to/agent_level` for a fixed copy. Pip alone installs only the package and command wrappers; it does not select or configure a workspace. A skill can provide workflow instructions; a plugin can distribute the skill through a marketplace or bundle it with MCP tools or hooks. The Python package is the executable core.
-
-Activate the selected venv once per terminal session (bash/zsh): `source .venv/bin/activate`, or `source venv/bin/activate` when bootstrap reused an existing `venv`. Bootstrap prints the exact activation command, including for a custom `--venv`. Then use `agent-level-assess` in both this checkout and other workspaces. Use `deactivate` to leave the venv; without activation, the command's full path still works.
-
-Commands write reports relative to the current working directory unless `-o` is supplied. Run `agent-level-assess` from the project root; it defaults to that directory. All examples below assume the venv is activated:
-
-```bash
-agent-level-assess
-agent-level-assess --project-dir /path/to/workspace
-agent-level-assess --source codex --days 30
-agent-level-assess --since 2026-09-01 --until 2026-09-20
-agent-level-assess --eval-results results.json
-agent-level-assess --eval-results results.json --evidence-root ./evidence
-agent-level-assess --eval-results paired-results.json --evidence-root ./paired-evidence
-agent-level-assess --format json -o -
-agent-level-assess --report-name "Team Review"
-```
-
-The default title is “AI Engineering Assessment”. One self-contained HTML report goes to `out/agent_level/YYYY-MM-DD/ai-engineering-assessment.html`, using the local date at runtime. It contains all selected source views. Rerunning on the same date overwrites the file. `--report-name NAME` (also `--name`) changes the title and default filename. Use `-o PATH` for another location. `--format txt+html` explicitly writes both files and replaces the supplied extension. The command prints English progress, absolute output paths, and a browser-ready `file://` URL for HTML to stderr, leaving JSON stdout clean.
-
-The HTML report works offline. It offers source and method selectors, expandable level checks, and JSON download. All report formats use English.
+Run `agent-level-assess` again after tasks finish. Activate the venv in each new terminal. Keep the tool checkout available and rerun bootstrap if you move it or change the venv. For command options, run `agent-level-assess --help`.
 
 ## Level assessment
 
-| Level | Decision basis |
-|---|---|
-| Unknown | Insufficient logs; absence of data does not imply L0 |
-| L0 Manual Engineering | Requires human confirmation |
-| L1 AI-assisted Coding | Interaction or investigation without an explicit edit signal |
-| L2 Interactive AI Coding | Explicit edit tool call, but L3 requirements unmet |
-| L3 Agent Coding | At least 50 tool calls, 3 human inputs, a tool/human ratio of 3, and one edit-then-verification session |
-| L4 Agent-first Engineering | L3 plus at least 3 edit-then-verification sessions on 2 UTC days |
-| L5 Autonomous Engineering | L4 plus self-reported task pickup, PR, CI repair, outcome tracking, and at most 1 human intervention per task |
-| L6 Self-improving Engineering System | L5 plus self-reported outcome-driven improvement, automated evaluation, and rollback |
-| L7 Governed Recursive Self-Improvement | L6 plus self-reported system iteration, research/build/evaluate/deploy, and human governance |
+L0–L7 describes the division of engineering work between humans and AI. A higher number represents a different degree of delegation and system capability; choose the workflow that fits your work.
 
-Levels accumulate; none can be skipped. L3/L4 are observations of log behavior. Running a build or test does not prove that it passed or that a task was completed. L5–L7 are marked `DECLARED` because their evidence is self-reported. Thresholds are project heuristics that have not been calibrated across teams. L7 is an optional research direction.
+| Level | Name | What it looks like | Main human role |
+|---|---|---|---|
+| L0 | Manual Engineering | Humans implement and verify; AI is at most a reference | Developer |
+| L1 | AI-assisted Coding | AI explains, suggests, or generates snippets; humans integrate them | Developer |
+| L2 | Interactive AI Coding | AI edits files directly; humans frequently choose the next step | Step decision maker |
+| L3 | Agent Coding | Given a task, an agent edits and attempts verification | Task initiator |
+| L4 | Agent-first Engineering | The edit-and-verify workflow repeats across sessions and days | Supervisor |
+| L5 | Autonomous Engineering | An agent picks up tasks, delivers changes, repairs CI, and tracks outcomes | Specification and acceptance owner |
+| L6 | Self-improving Engineering System | Results drive changes to prompts, tools, or workflows, with evaluation and rollback | Improvement and governance owner |
+| L7 | Governed Recursive Self-Improvement | A system researches, builds, evaluates, and deploys a next-generation system under human governance | Research and governance owner |
 
-```bash
-agent-level-assess --init-config
-agent-level-assess --config ai-level-evidence.json
-```
+**How to read the result:** `DEFAULT` means L0 is achieved by default, without requiring logs or human confirmation. `OBSERVED` means the available log behavior supports a candidate level, not that tasks passed. `NOT VERIFIED` means the required behavior is not established; L5–L7 remain reference definitions without automatic assessment. L0 remains achieved at higher levels; L7 is an optional research direction.
 
-The generated L5–L7 config is optional and is not overwritten by default. In multi-source mode, legacy top-level evidence applies only to the combined view. Use `sources.claude` and `sources.codex` for separate declarations and `combined` for the merged view; each scope accepts nested `l5/l6/l7` fields. Booleans must be JSON `true` or `false`. The intervention rate must be a finite nonnegative number or `null` for unknown.
+See [level rules and log observation limits](docs/AGENT_LEVEL_L0-L7.md) for thresholds and evidence requirements.
 
-## Evidence and data scope
+## References
 
-- Claude input: `projects/**/*.jsonl` and supplemental daily `stats-cache.json`. Codex input: `sessions/**/*.jsonl` and `archived_sessions/**/*.jsonl`.
-- System injections and subagent human inputs are excluded. Records and calls are deduplicated by their identifiers. Opaque code orchestration is diagnosed, so edit and verification activity may be undercounted.
-- Codex `functions.exec` records the outer JavaScript call but does not expose a trustworthy trace of each nested tool call. Reports mark level visibility as `partial` and show the opaque call count. Text appearing in JavaScript or its printed output is not treated as proof that a nested edit or test ran.
-- Edit-then-verification must occur within one session. Combined reports add counts before recalculating ratios; they do not join an edit in one source to a test in another.
-- Project mode filters logs by `cwd` within the project and descendants. It omits the global stats cache and automatic self-report config. Session completion and successful tool return are activity signals, not task acceptance.
-- Project mode discovers existing `.codex/agent-eval/tasks/*/results.json` and `.claude/agent-eval/tasks/*/results.json` in the project and its ancestors. Records are filtered by task `repo` and locally checked. `--no-auto-evals` disables discovery. It cannot be combined with `--eval-results`.
-- Task result protocol 1.0/1.1 retains success, failure, unknown, and unrun outcomes. Daily records store `model` and `reasoning_effort` separately. Statistics are grouped by source, model, effort, harness, and suite version. Repeat probabilities are reported only for complete controlled groups. Missing effort in older records uses a documented official default for recognized models; this does not prove the historical runtime setting. Explicit `unknown` remains unknown.
-- Explicit `improvement_comparisons` in a schema 1.1 result file pair two controlled harness versions on the same frozen tasks. The report computes autonomous success deltas only from complete locally checked evidence; L6 stays self-reported. See [comparison protocol](docs/IMPROVEMENT_EVALUATION.md).
-- Reports contain aggregates only, omitting prompts, source code, commands, tool arguments, and raw evidence. Local hash and content checks are not an independent audit.
+Start with the project guides:
 
-The evaluator only reads, assesses, and reports. `agent_level_record.py start/finish` separately registers daily tasks, runs predefined acceptance commands, and saves evidence. [AGENTS.md](AGENTS.md) describes the workflow referenced by each enabled project; there is no background listener. Acceptance output is capped at 16 MiB during capture; exceeding the limit terminates the process group and records an unknown result. Local verification checks the journal's referenced output hash and agreement with the grader exit code. Controlled before/after trials must be run by an external harness or evaluator. This project does not provide a task executor, suite, or usage charts. JSON keeps existing aggregate usage fields for consumers.
+- [L0–L7 definitions and observation rules](docs/AGENT_LEVEL_L0-L7.md): level meanings, thresholds, and evidence states.
+- [Anthropic-style evaluation and JSON protocol](docs/ANTHROPIC.md): task outcomes, graders, and repeated-trial statistics.
+- [Before/after improvement evaluation](docs/IMPROVEMENT_EVALUATION.md): controlled comparisons and evidence requirements.
+- [OpenAI evaluation guidance and project scope](docs/OPENAI.md): how the guidance maps to current capabilities and gaps.
+- [Sources and references](docs/REFERENCES.md): primary sources from Anthropic, OpenAI, SWE-bench, METR, SPACE, DORA, DeepMind, and NIST, with their relevance and limits.
 
-For Codex sessions that use `functions.exec`, evaluate task results through the report's task outcome view: register acceptance criteria before the task, finish with the recorder, and inspect success, failure, and unknown results. These records do not change the historical L0–L7 level. A trustworthy L3/L4 assessment of nested calls would require the Codex runtime to emit individual tool events with session identity, timestamps, tool name, and execution outcome. The evaluator cannot reconstruct those events from old JavaScript text or printed output.
-
-## Command line options
-
-| Option | Effect |
-|---|---|
-| `--source claude\|codex\|all` | Source; default `all` |
-| `--view separate\|combined\|both` | Source views; default `both` |
-| `--claude-dir PATH` / `--codex-dir PATH` | Defaults to `CLAUDE_DIR` or `~/.claude`, and `CODEX_HOME` or `~/.codex` |
-| `--project-dir PATH` | Filter project logs and existing task records |
-| `--no-auto-evals` | Read only historical logs in project mode |
-| `--days N` | Last N UTC calendar days including today; N ≥ 1 |
-| `--since DATE` / `--until DATE` | Inclusive UTC dates; cannot be combined with `--days` |
-| `--eval-results PATH` | Import explicit task results and optional improvement comparisons, even without logs |
-| `--evidence-root PATH` | Local evidence directory; requires `--eval-results` |
-| `--eval-k N` | Repeat-trial parameter; default 3 |
-| `--model MODEL` / `--effort LEVEL` | Filter imported task evidence by model and reasoning effort; historical L0–L7 log levels are unchanged |
-| `--config PATH` / `--no-auto-config` | Supply self-reported config / disable automatic current-directory config |
-| `--init-config [PATH]` / `--force` | Write config template / allow overwrite |
-| `--format txt+html\|txt\|text\|md\|json\|html` | Default `html`; `txt+html` writes both files; `text` is an alias for `txt` |
-| `--report-name NAME` / `--name NAME` | Report title and default filename |
-| `-o, --output PATH` | Output path; `-` writes a single format to stdout |
-
-Exit codes: `0` success; `1` config template already exists without overwrite; `2` argument, input, or output error.
-
-## Source and verification
-
-- `assess.py`: L0–L7 rules, config, CLI, and shared report data.
-- `agent_level_record.py` and [AGENTS.md](AGENTS.md): daily task registration and acceptance evidence.
-- `assessment/logs.py` and `assessment/history.py`: log adapters, merging, and historical activity.
-- `assessment/anthropic.py`: task evidence and outcome statistics.
-- `assessment/evidence.py` and `assessment/collection.py`: local evidence checking and record discovery.
-- `assessment/web.py`: offline HTML; `assessment/references.py`: method sources.
-- `assessment/improvement.py`: paired controlled comparison of autonomous task outcomes.
-- `tests/`: synthetic data and regression tests.
-
-```bash
-python3 -m unittest discover -s tests -t . -v
-```
-
-The installation integration test creates a temporary venv and exercises bootstrap and all installed commands without network access. To include it, prepare a wheel directory containing `setuptools>=64` and `wheel` and set `AGENT_LEVEL_TEST_WHEELHOUSE` to that directory when running the suite. Without this variable, the integration test is explicitly skipped; ordinary regression tests still run.
-
-See [L0–L7 rules](docs/AGENT_LEVEL_L0-L7.md), [Anthropic import protocol and statistics](docs/ANTHROPIC.md), [local improvement comparison](docs/IMPROVEMENT_EVALUATION.md), [OpenAI evaluation guidance and current project scope](docs/OPENAI.md), and [references](docs/REFERENCES.md).
+These sources inform the methods; they do not validate this project's level thresholds or imply endorsement.

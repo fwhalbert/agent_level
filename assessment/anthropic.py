@@ -12,7 +12,6 @@ from pathlib import Path
 from .history import render_history
 from .references import ANTHROPIC_URL, METHOD_NOTE
 
-SCHEMA_VERSION = '1.0'
 IDENTITY = ('source', 'suite_id', 'suite_version', 'model', 'harness_version', 'task_id')
 # Defaults for legacy records that omitted effort. Keep this list narrow: unknown
 # models have no defensible inferred effort. Explicit "unknown" is not backfilled.
@@ -353,7 +352,7 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
         'log_context': {'sessions': len(metrics.sessions), 'tool_calls': metrics.tool_calls,
                         'verification_attempts': metrics.verification_calls},
         'limitations': [METHOD_NOTE,
-            'The collected event journal covers registration, notes, and acceptance, not the full session. Local consistency checks do not prove that the agent-defined criteria cover every requirement.',
+            'The collected event journal covers registration and acceptance, not the full session. Local consistency checks do not prove that the agent-defined criteria cover every requirement.',
             'Daily tasks record one acceptance run. Only controlled evaluations calculate pass@k / pass^k; the modes are not ranked together.',
             'Local verification checks file hashes, grader content, and artifact links in the selected directory. It is not an independent audit or a check of requirement coverage.',
             'The graded pass rate describes only trials with results. Success bounds include unknown and unrun trials in the denominator; they are not confidence intervals.',

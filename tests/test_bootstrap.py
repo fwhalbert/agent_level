@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from auto_eval_session_notice import enabled
-from bootstrap import IMPORT_START, assess_entrypoint_content, enable_workspace, main
+from bootstrap import IMPORT_END, IMPORT_START, assess_entrypoint_content, enable_workspace, main
 
 
 SOURCE = Path(__file__).resolve().parents[1]
@@ -25,10 +25,14 @@ class TestBootstrap(unittest.TestCase):
         enable_workspace(self.workspace, self.venv, SOURCE)
         self.assertFalse((self.workspace / "agent_level_assess.py").exists())
         self.assertFalse((self.workspace / "assess.py").exists())
+        ignored = (self.workspace / '.gitignore').read_text()
+        self.assertNotIn('agent-eval', ignored)
         first = (self.workspace / "AGENTS.md").read_text()
         first_claude = (self.workspace / "CLAUDE.md").read_text()
         self.assertTrue(enabled(self.workspace))
-        self.assertIn(f"@{SOURCE / 'AGENTS.md'}\n", first)
+        self.assertEqual(first, "## agent_level: automatic task evidence\n\n"
+                         "Read and follow the task evidence workflow in:\n"
+                         f"@{SOURCE / 'AGENTS.md'}\n")
         self.assertNotIn("agent_level_record.py start", first)
         self.assertNotIn("<!-- agent-level:task-evidence:start -->", first)
         self.assertEqual(first_claude, "@AGENTS.md\n")
@@ -44,6 +48,18 @@ class TestBootstrap(unittest.TestCase):
         for path in (self.workspace / ".codex" / "hooks.json",
                      self.workspace / ".claude" / "settings.json"):
             self.assertEqual(len(json.loads(path.read_text())["hooks"]["SessionStart"]), 1)
+
+    def test_reports_are_ignored_without_erasing_project_patterns(self):
+        ignore = self.workspace / '.gitignore'
+        ignore.write_text('keep-existing-pattern\n.codex\n.claude\n')
+        enable_workspace(self.workspace, self.venv, SOURCE)
+        first = ignore.read_text()
+        self.assertNotIn('agent-eval', first)
+        for pattern in ('keep-existing-pattern', '.codex', '.claude',
+                        '/out/agent_level/'):
+            self.assertEqual(first.splitlines().count(pattern), 1)
+        enable_workspace(self.workspace, self.venv, SOURCE)
+        self.assertEqual(ignore.read_text(), first)
 
     def test_existing_instructions_and_settings_are_preserved(self):
         (self.workspace / "AGENTS.md").write_text("Keep this rule.\n")
@@ -73,10 +89,26 @@ class TestBootstrap(unittest.TestCase):
         content = (self.workspace / "AGENTS.md").read_text()
         self.assertTrue(content.startswith("Keep this rule.\n\n"))
         self.assertNotIn("AUTO_EVALUATION.md", content)
-        self.assertEqual(content.count("# Automatic Task Evidence"), 1)
+        self.assertEqual(content.count("## agent_level: automatic task evidence"), 1)
         self.assertTrue(enabled(self.workspace))
         enable_workspace(self.workspace, self.venv, SOURCE)
         self.assertEqual((self.workspace / "AGENTS.md").read_text(), content)
+
+    def test_marked_import_migrates_without_changing_surrounding_rules(self):
+        agents = self.workspace / "AGENTS.md"
+        before = "Keep this rule.\n\n"
+        after = "\nKeep this too.\n\n## Project rules\nUse the project venv.\n"
+        agents.write_text(before + f"{IMPORT_START}\n## Automatic Task Evidence\n\n"
+                          "Read and follow the task evidence workflow in:\n"
+                          f"@/old/source/AGENTS.md\n{IMPORT_END}\n" + after)
+        enable_workspace(self.workspace, self.venv, SOURCE)
+        content = agents.read_text()
+        self.assertEqual(content, before + "## agent_level: automatic task evidence\n\n"
+                         "Read and follow the task evidence workflow in:\n"
+                         f"@{SOURCE / 'AGENTS.md'}\n" + after)
+        self.assertTrue(enabled(self.workspace))
+        enable_workspace(self.workspace, self.venv, SOURCE)
+        self.assertEqual(agents.read_text(), content)
 
     def test_generated_project_launchers_are_removed_but_custom_scripts_remain(self):
         old_path = self.workspace / "assess.py"
@@ -124,6 +156,10 @@ class TestBootstrap(unittest.TestCase):
         custom = {'type': 'command', 'command': 'echo agent-level-session-notice', 'timeout': 12}
         path.write_text(json.dumps({'hooks': {'SessionStart': [{'hooks': [custom]}]}}))
         enable_workspace(self.workspace, self.venv, SOURCE)
+        agents = self.workspace / 'AGENTS.md'
+        before = 'Keep this rule.\n\n'
+        after = '\nKeep this too.\n\n## Project rules\nUse the project venv.\n'
+        agents.write_text(before + agents.read_text() + after)
         relocated = Path(self.temporary.name) / 'relocated'
         relocated.mkdir()
         (relocated / 'AGENTS.md').write_text((SOURCE / 'AGENTS.md').read_text())
@@ -131,7 +167,10 @@ class TestBootstrap(unittest.TestCase):
         venv.mkdir()
         enable_workspace(self.workspace, venv, relocated)
         content = (self.workspace / 'AGENTS.md').read_text()
-        self.assertEqual(content.count(IMPORT_START), 1)
+        self.assertEqual(content.count('## agent_level: automatic task evidence'), 1)
+        self.assertNotIn('<!-- agent-level:', content)
+        self.assertTrue(content.startswith(before))
+        self.assertTrue(content.endswith(after))
         self.assertIn(f'@{relocated / "AGENTS.md"}\n', content)
         self.assertNotIn(f'@{SOURCE / "AGENTS.md"}', content)
         for config in (path, self.workspace / '.claude' / 'settings.json'):

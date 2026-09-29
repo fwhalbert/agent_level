@@ -1,45 +1,83 @@
-# AI 工程评估（简版）
+# AI 工程评估
 
-本工具读取本地 Claude Code / Codex 日志和任务验收记录，生成 L0–L7 工作方式、任务结果证据及改进前后对照评估。需要 Python 3.10+，运行时无第三方依赖。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-一条命令同时安装到工作区 venv，并接入 `AGENTS.md`、`CLAUDE.md` 和会话提示 hooks；缺少 `CLAUDE.md` 时会创建并写入 `@AGENTS.md`。在本工具源码目录运行以下命令，将 `/path/to/workspace` 替换为自己的工作区路径：
+**面向 AI 辅助软件工程的开源实证评估框架。** 基于 Claude Code / Codex 的本地会话日志与任务验收证据，从人机协作模式、任务完成可靠性和工作流改进效果三个维度，分析 AI Agent 在真实工程场景中的表现。
+
+项目将工程活动转化为可追溯的评估结果，帮助开发者、团队与研究者识别自动化边界、验证任务交付，并在固定任务集上比较提示词、工具与协作流程的改进效果。数据在本地处理，报告可离线查看，为 AI 工程实践的持续改进与实证研究提供依据。
+
+## 能做什么
+
+- **了解工作方式**：给出 L0–L7 候选等级，展示判断依据和缺少的条件。
+- **查看任务结果**：根据预先登记的验收检查，统计成功、失败、未知和未运行的任务。
+- **对比改进效果**：在固定任务集上，对比提示词、工具或工作流不同版本的任务结果。
+- **查看使用情况**：展示每日 Token 用量、模型占比和缓存使用，支持 Claude Code、Codex 及合并视图。
+- **生成本地报告**：提供可切换中英文的离线 HTML，也可导出文本、Markdown 和 JSON。报告只包含汇总信息，不包含原始对话或源码。
+
+需要 **Python 3.10+**，运行时无第三方依赖。有历史日志就可以先看工作方式；任务验收统计需要额外的任务记录。
+
+## 现支持的评估方法与标准
+
+本项目没有采用统一的行业等级标准。目前支持以下方法和数据协议：
+
+| 方法 / 协议 | 回答什么问题 | 当前支持范围 |
+|---|---|---|
+| 项目自定义 L0–L7，规则集 1.0 | 人和 AI 如何分工完成工程工作？ | L0 默认达成；日志支持 L1–L4 候选等级；L5–L7 仅展示参考定义 |
+| 参考 Anthropic 的 Agent 评估方法 | 任务是否达到验收标准？重复执行是否可靠？ | 日常任务验收结果；完整受控重复试验组的 pass@1、pass@k、pass^k |
+| 本地任务结果协议 1.0 / 1.1 | 如何记录和导入任务证据？ | JSON 导入；1.1 增加日常任务记录及可选的改进对照 |
+| 项目自定义改进对照 | 修改工作流后，自主完成任务的效果是否改善？ | 同一冻结任务集的前后配对结果、退步项和证据状态 |
+
+Anthropic 方法可用于 Claude Code 和 Codex 的任务证据；**L0–L7 不是 Anthropic 官方分级**，评估结果也不是官方认证。OpenAI 评估指南、SWE-bench、METR 等作为参考资料，不是本工具额外实现的评分标准。详见 [References](#references)。
+
+## Quick start
+
+以下步骤适用于 **Linux / macOS 的 bash 或 zsh**。请先安装 Git 和 Python 3.10+，并在同一个终端依次执行。安装阶段可能需要联网下载 Python 构建工具。
+
+下载本工具，将 `workspace_dir` 改为要评估的项目的绝对路径：
 
 ```bash
-python3 bootstrap.py --project-dir /path/to/workspace
-cd /path/to/workspace
-source .venv/bin/activate
+git clone https://github.com/fwhalbert/agent_level.git
+cd agent_level
+workspace_dir="/absolute/path/to/your-project"
+python3 bootstrap.py --project-dir "$workspace_dir" --venv "$workspace_dir/.venv"
+source "$workspace_dir/.venv/bin/activate"
+cd "$workspace_dir"
 agent-level-assess
 ```
 
-已有 `project/venv` 时会使用它，否则创建 `project/.venv`；其他位置可用 `--venv PATH` 指定。复用已有 `venv` 时使用 `source venv/bin/activate`。bootstrap 完成后会打印实际环境对应的激活命令。每个终端会话激活一次（bash/zsh），之后统一用 `agent-level-assess`，本工具源码目录和其他工作区的用法相同；用 `deactivate` 退出环境。未激活时仍可用命令的完整路径运行。`--project-dir` 不带路径时使用当前目录。bootstrap 将评估命令安装到 venv，并在工作区 `AGENTS.md` 写入 `@源仓库绝对路径/AGENTS.md`，直接引用本仓库当前的规则文件。旧版复制的正文和规则链接会迁移为引用，保留周围的项目指令。源仓库需要保持可访问；移动仓库后重新运行 bootstrap 即可更新引用。`CLAUDE.md` 通过 `@AGENTS.md` 引用工作区指令。
+安装脚本会安装命令，在 `AGENTS.md`、`CLAUDE.md` 中引用任务记录指令，并配置会话提示 hook。原有项目指令会保留，报告目录会加入 `.gitignore`。
 
-更换 venv 后重新运行 bootstrap，会更新会话提示 hook 的命令路径；重复执行不会重复添加配置。hook 会跟随规则引用检查是否启用，只显示提示；代理仍需读取并执行引用文件中的任务记录流程。Codex 对新 hook 可能仍要求信任确认。bootstrap 不在项目根目录放脚本；激活后从项目根目录运行 `agent-level-assess` 即默认只评估该项目。venv 中也提供 `agent_level_assess.py` 命令别名。旧版生成且未改动的项目根目录脚本会被删除，自有脚本会保留。
+在浏览器打开终端输出的 `file://` 链接即可离线查看中英文报告，默认路径为 `out/agent_level/YYYY-MM-DD/ai-engineering-assessment.html`。没有匹配日志时，等级默认为 L0；任务结果统计需要验收记录。
 
-只安装命令、不接入工作区时，可直接使用 pip：
+在目标项目开启新的 Claude Code 或 Codex 会话，照常交给它工程任务。代理按 [记录流程](AGENTS.md) 在工作前登记验收标准，结束后运行检查并记录结果。hook 只显示 “Auto eval enabled.”；Codex 的新 hook 可能需要先在 `/hooks` 中审阅并信任。
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python3 -m pip install -e .
-agent-level-assess --project-dir /path/to/workspace
-```
+任务完成后，再运行 `agent-level-assess` 更新报告。每个新终端先激活虚拟环境。请保留本工具源码目录，移动目录或更换虚拟环境后重新运行安装脚本。完整命令参数可通过 `agent-level-assess --help` 查看。
 
-单独执行 `python3 -m pip install` 只安装 Python 包和 venv 中的命令，不会自动选择并修改某个工作区。已有虚拟环境时，先 `source /path/to/venv/bin/activate`，再用 `python3 -m pip install -e /path/to/agent_level` 安装，即可直接运行 `agent-level-assess` 或 `agent-level-record`。默认报告写入当前工作目录的 `out/agent_level/`；用 `-o` 指定位置。以下示例均假设已激活环境：
+## Level L0–L7 介绍
 
-```bash
-agent-level-assess
-agent-level-assess --project-dir /path/to/workspace
-agent-level-assess --eval-results results.json --evidence-root ./evidence
-agent-level-assess --eval-results paired-results.json --evidence-root ./paired-evidence
-agent-level-assess --project-dir /path/to/workspace --model GPT-6-Sol --effort xhigh
-```
+L0–L7 描述的是**人和 AI 的工程分工**。数字越高，代表不同程度的任务委托和系统能力；应根据自己的工作选择合适的方式。
 
-默认在 `out/agent_level/YYYY-MM-DD/` 生成一个离线 HTML 文件，合并展示所选来源视图。如需 TXT 和 HTML 两份文件，可显式指定 `--format txt+html`。运行时会在 stderr 用英文显示任务记录、日志扫描、评估和报告生成进度；`--format json -o -` 的 stdout 仍是纯 JSON。网页默认英文，可切换中文，浏览器会记住选择。只有日志时，任务成功率为“证据不足”；L5–L7 属于自报证据，不能视作独立认证。改进对照要求同一冻结任务集的前后受控试验及本地可核验证据；本地核验仍不等于独立执行。
+| 等级 | 名称 | 通俗理解 | 人的主要角色 |
+|---|---|---|---|
+| L0 | 手工工程（Manual Engineering） | 人完成实现与验证，AI 至多提供参考 | 开发者 |
+| L1 | AI 辅助编码（AI-assisted Coding） | AI 解释、建议、生成代码片段，由人整合 | 开发者 |
+| L2 | 交互式 AI 编码（Interactive AI Coding） | AI 直接改文件，人频繁决定下一步做什么 | 步骤决策者 |
+| L3 | Agent 编码（Agent Coding） | 人提出任务，Agent 修改代码并尝试验证 | 任务发起者 |
+| L4 | Agent 优先工程（Agent-first Engineering） | 修改与验证流程在多个会话、多天持续出现 | 监督者 |
+| L5 | 自主工程（Autonomous Engineering） | Agent 接任务、交付修改、修复 CI，并跟踪结果 | 需求与验收负责人 |
+| L6 | 自我改进工程系统（Self-improving Engineering System） | 根据结果改进提示词、工具或流程，并具备评估和回滚机制 | 改进与治理负责人 |
+| L7 | 受治理的递归自我改进（Governed Recursive Self-Improvement） | 在人的治理下，研究、构建、评估和部署下一代系统 | 研究与治理负责人 |
 
-每条新任务记录分别保存 `model` 与 `reasoning_effort`。评估时可用 `--model`、`--effort`（或 `--reasoning-effort`）筛选任务证据；这两个参数不筛选历史日志的 L0–L7 等级。旧记录缺少 effort 时，已知模型按官方文档中的默认档位归类；没有明确默认值的模型仍为 `unknown`，显式记录的 `unknown` 也不会覆盖。默认档位只是旧记录的归类假设，不能证明当时运行环境未覆盖该设置。
+**读报告时注意三个状态：** `DEFAULT` 表示 L0 默认达成，无需日志或人工确认；`OBSERVED` 是日志支持某个候选等级，不代表任务已通过验收；`NOT VERIFIED` 表示尚未证实所需行为；L5–L7 仅保留参考定义，不自动评定。达到更高等级后 L0 仍保持达成，L7 属于可选的研究方向。
 
-Codex 使用 `functions.exec` 时，会话日志只记录外层 JavaScript 调用，不提供可信的内部工具执行轨迹。报告会把等级可见性标为 `partial`，并列出无法展开的调用次数；不会仅凭 JS 文本或打印的输出推定修改、构建或测试已经执行。评估这类 Codex 任务时，应在任务开始前登记验收标准、结束时运行 recorder，并在“任务结果评估”查看成功、失败和未知结果。这些任务结果不改变历史日志的 L0–L7 等级。若要可靠地评定内部调用对应的 L3/L4，需要 Codex 运行时提供每次内部工具执行的会话标识、时间戳、工具名称和执行结果；旧日志无法还原这些信息。
+具体阈值与证据要求见 [等级规则与日志观察边界](docs/AGENT_LEVEL_L0-L7.md)。
 
-完整命令见 [English documentation](README.md)；独立评测步骤与数据协议见 [自我改进对照](docs/IMPROVEMENT_EVALUATION.md)。
+## References
 
-验收日志在采集时限制为 16 MiB；超限会终止验收进程组并记录 unknown。本地核验同时检查日志文件哈希，以及 journal 与 grader 的退出码是否一致。测试使用 `python3 -m unittest discover -s tests -v`。设置 `AGENT_LEVEL_TEST_WHEELHOUSE` 为包含 `setuptools>=64` 和 `wheel` 安装包的目录，可同时运行真实临时 venv 安装测试；未设置时会明确跳过该项。
+- [L0–L7 定义与观察规则](docs/AGENT_LEVEL_L0-L7.md)：等级含义、阈值、证据状态及局限。
+- [Anthropic 方法与 JSON 协议](docs/ANTHROPIC.md)：任务、评分器、验收结果和重复试验统计。
+- [改进前后对照评估](docs/IMPROVEMENT_EVALUATION.md)：受控对照步骤及证据要求。
+- [OpenAI 评估指南与项目范围](docs/OPENAI.md)：指南与当前实现的对应关系及缺口。
+- [完整参考文献](docs/REFERENCES.md)：Anthropic、OpenAI、SWE-bench、METR、SPACE、DORA、DeepMind 和 NIST 的一手来源，以及各自适用的范围。
+
+这些资料为评估方法提供参考，不代表对本项目等级阈值的验证或官方背书。

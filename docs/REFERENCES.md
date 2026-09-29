@@ -1,6 +1,6 @@
 # Assessment Sources and References
 
-Reviewed 2026-09-23. The links below are primary sources from authors, research institutions, or product providers.
+The links below are primary sources from authors, research institutions, or product providers.
 
 The L0–L7 names, cumulative gates, and numeric thresholds such as 50 tool calls, 3 human inputs, 3 engineering sessions, 2 UTC days, and at most 1 human intervention per task are **project heuristics without statistical calibration or independent validity testing**. The references do not validate those thresholds.
 
@@ -16,7 +16,7 @@ The Claude Platform documentation covers explicit success criteria and code, hum
 
 **OpenAI, [Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices) and [Evaluate agent workflows](https://developers.openai.com/api/docs/guides/agent-evals).**
 
-These official OpenAI documentation pages describe task-specific objectives, datasets, graders, traces, and repeated evaluation. They do not define a universal level scale or validate this project's scoring rules. [OPENAI.md](OPENAI.md) maps that guidance to the project's current capabilities and gaps. The [OpenAI deprecations page](https://developers.openai.com/api/docs/deprecations) supplies the current legacy Evals platform timeline.
+These official OpenAI documentation pages describe task-specific objectives, datasets, graders, traces, and repeated evaluation. They do not define a universal level scale or validate this project's scoring rules. [OPENAI.md](OPENAI.md) maps that guidance to the project's current capabilities and gaps.
 
 ## Related research and engineering methods
 
@@ -34,4 +34,4 @@ Validating these levels would require human-labeled task samples, checks of log 
 
 ## Sampling uncertainty
 
-[NIST/SEMATECH — Confidence intervals](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm) describes the Wilson interval for a proportion. Since version 2.2, complete daily task groups use a 95% Wilson interval. It relies on a binomial sampling approximation and does not remove selection bias or certify reliability. Controlled groups containing multiple tasks do not directly apply Wilson intervals to pooled trials.
+[NIST/SEMATECH — Confidence intervals](https://www.itl.nist.gov/div898/handbook/prc/section2/prc241.htm) describes the Wilson interval for a proportion. Complete daily task groups use a 95% Wilson interval. It relies on a binomial sampling approximation and does not remove selection bias or certify reliability. Controlled groups containing multiple tasks do not directly apply Wilson intervals to pooled trials.

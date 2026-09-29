@@ -38,22 +38,18 @@ def load_project_evals(project_dir):
             ledger = load_evals(path)
             if ledger.get('collector') != 'daily-v1' or len(ledger['tasks']) != 1:
                 raise ValueError('Auto-discovered task records must be single-task daily-v1 records')
-            selected = []
-            for task in ledger['tasks']:
-                if (not isinstance(task, dict) or not isinstance(task.get('repo'), str)
-                        or not Path(task['repo']).is_absolute() or task.get('evaluation_mode') != 'daily'):
-                    raise ValueError('Auto-discovered task record has no identifiable task repo')
-                if project_matches(task['repo'], project):
-                    selected.append(task)
-            if not selected:
+            task = ledger['tasks'][0]
+            if (not isinstance(task, dict) or not isinstance(task.get('repo'), str)
+                    or not Path(task['repo']).is_absolute() or task.get('evaluation_mode') != 'daily'):
+                raise ValueError('Auto-discovered task record has no identifiable task repo')
+            if not project_matches(task['repo'], project):
                 continue
             local = EvidenceReader(path.parent)
-            for task in selected:
-                trials = task.get('trials')
-                if isinstance(trials, list):
-                    for trial in trials:
-                        if isinstance(trial, dict):
-                            reader.readers[id(trial)] = local
-            data['tasks'].extend(selected)
+            trials = task.get('trials')
+            if isinstance(trials, list):
+                for trial in trials:
+                    if isinstance(trial, dict):
+                        reader.readers[id(trial)] = local
+            data['tasks'].append(task)
             files += 1
     return (data if files else None), (reader if files else None), {'files': files, 'tasks': len(data['tasks'])}

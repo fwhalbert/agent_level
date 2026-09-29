@@ -1,10 +1,9 @@
 # OpenAI Evaluation Guidance and Project Status
 
-Official OpenAI documentation reviewed 2026-09-23:
+Official OpenAI documentation:
 
 - [Evaluation best practices](https://developers.openai.com/api/docs/guides/evaluation-best-practices): objectives, representative datasets, metrics, continuous evaluation, and grader calibration.
 - [Evaluate agent workflows](https://developers.openai.com/api/docs/guides/agent-evals): traces, graders, datasets, and repeatable eval runs for agents.
-- [Deprecations](https://developers.openai.com/api/docs/deprecations): status and dates for the legacy Evals platform.
 
 These pages provide official OpenAI guidance for designing evaluations. They do not define an official L0–L7 level scale, a universal pass threshold, a certification, or a required local JSON format. The thresholds and protocol described elsewhere in this repository are project choices.
 
@@ -39,10 +38,6 @@ This repository currently imports Codex session logs and can assess registered t
 | Continuous evaluation | [AGENTS.md](../AGENTS.md) describes an agent-run daily record workflow; there is no background scheduler or OpenAI service integration |
 
 For a concrete OpenAI-guided suite, define the intended user task and acceptance decision before running the agent. Include representative successes and failures, pin the dataset and grader versions, keep the model and harness conditions, retain a trace and output artifact for every run, and report missing runs separately from failures. Review a sample of traces and grades, especially surprising passes or failures. These are local implementation recommendations derived from the official guidance, not an OpenAI protocol.
-
-## Legacy Evals platform status
-
-OpenAI's [deprecation notice](https://developers.openai.com/api/docs/deprecations) says the Evals platform was deprecated on 2026-06-03, existing evals become read-only on 2026-10-31, and the Evals dashboard and API are scheduled to shut down on 2026-11-30. The grader APIs documented for that workflow are also in transition. Do not treat the legacy Evals API as a durable dependency for this repository. Recheck the official notice before planning any platform integration.
 
 ## Interpretation limits
 

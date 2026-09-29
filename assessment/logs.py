@@ -15,10 +15,6 @@ DELEGATION_TOOLS = {"Task", "Agent", "Workflow", "spawn_agent", "send_input", "f
 WORKFLOW_TOOLS = {"Workflow"}
 FORBIDDEN_NAMES = {".credentials.json", "auth.json", ".env", "id_rsa", "id_ed25519"}
 
-# --------------------------------------------------------------------------
-# Shell classification (specification section 3.3): count categories, never report raw commands.
-# --------------------------------------------------------------------------
-
 # Higher values take priority; assign each command its highest-priority category.
 BASH_CATEGORIES = [
     # (name, priority, regex over a sub-command)
@@ -28,8 +24,7 @@ BASH_CATEGORIES = [
                  r"|^python[0-9.]*\s+(-m\s+)?(pytest|unittest)\b"
                  r"|^(npm|pnpm|yarn|bun)\s+(run\s+)?test\b"
                  r"|^(cargo|go|dotnet|mvn|gradle|swift)\s+test\b"
-                 # make check / make test / make run* verify C and embedded builds.
-                 # Running a compiled program and checking its result is verification.
+                 # make run* is treated as verification for embedded builds.
                  r"|^make\s+(-\S+\s+)*(check|test|run)(-\S+)?\b"
                  # Direct execution of local test binaries or scripts: ./test_x, ./build/bin/foo_test, ./run_tests.sh
                  r"|^(\./|\.\./|/)\S*(^|[/_-])?test[\w.-]*\b"
@@ -158,10 +153,6 @@ def classify_bash(command: str, _depth=0) -> str:
     return best_name
 
 
-# --------------------------------------------------------------------------
-# Human input filtering (specification section 3.1: humanish_user)
-# --------------------------------------------------------------------------
-
 # IDE, CLI, and system wrappers are not human inputs.
 MACHINE_BLOCK_RE = re.compile(
     r"<ide_opened_file>.*?</ide_opened_file>"
@@ -214,7 +205,7 @@ def is_human_input(rec: dict) -> bool:
                 continue
             btype = b.get("type")
             if btype == "tool_result":
-                continue  # Only tool-result blocks are excluded.
+                continue
             if btype in ("image", "document"):
                 has_attachment = True
             if btype == "text":
@@ -230,10 +221,6 @@ def is_human_input(rec: dict) -> bool:
     stripped = OPEN_TAG_RE.sub("", stripped).strip()
     return has_attachment or bool(stripped)
 
-
-# --------------------------------------------------------------------------
-# Log collection
-# --------------------------------------------------------------------------
 
 def parse_date(s: str) -> datetime:
     return datetime.strptime(s, "%Y-%m-%d").replace(tzinfo=timezone.utc)
@@ -285,13 +272,11 @@ class Metrics:
         self.daily_model_usage = {}
 
         self.sessions = set()
-        self.models = Counter()
         self.first_ts = None
         self.last_ts = None
         self.days = set()
         self.parse_errors = 0
 
-        # stats-cache.json
         self.stats_days = 0
         self.stats_messages = 0
         self.stats_sessions = 0
@@ -299,7 +284,6 @@ class Metrics:
         self.stats_available = False
         self.stats_window = ""
 
-    # --- derived -----------------------------------------------------
     @property
     def tool_per_human(self):
         return self.tool_calls / self.humanish_user if self.humanish_user else 0.0
@@ -331,11 +315,6 @@ class Metrics:
     @property
     def verification_ratio(self):
         return self.verification_calls / self.bash_total if self.bash_total else 0.0
-
-    @property
-    def search_read_ratio(self):
-        n = self.bash["search"] + self.bash["read"]
-        return n / self.bash_total if self.bash_total else 0.0
 
 
 def _count(value, m):
@@ -420,7 +399,7 @@ def _tool(m, name, inp, sid, sidechain, ts=None):
     if name in SHELL_TOOLS:
         cmd = inp.get('command', inp.get('cmd', '')) if isinstance(inp, dict) else ''
         if isinstance(cmd, list) and all(isinstance(v, str) for v in cmd):
-            cmd = shlex.join(cmd) if hasattr(shlex, 'join') else ' '.join(shlex.quote(v) for v in cmd)
+            cmd = shlex.join(cmd)
         category = classify_bash(cmd)
         m.bash[category] += 1
         edited_at = m._edited_sessions.get(sid)
@@ -830,7 +809,7 @@ def merge_metrics(items):
         for attr in ('model_usage', 'daily_model_usage'):
             for key, counts in getattr(m, attr).items():
                 getattr(merged, attr).setdefault(key, Counter()).update(counts)
-        for key in ('tools', 'bash', 'models', 'diagnostics'):
+        for key in ('tools', 'bash', 'diagnostics'):
             getattr(merged, key).update(getattr(m, key))
         for key in ('sessions', 'days', 'engineering_sessions', 'engineering_days'):
             getattr(merged, key).update(getattr(m, key))
