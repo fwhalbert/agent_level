@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="330" viewBox="0 0 1200 330" role="img" aria-labelledby="title desc">
+<title id="title">Agent Level: L0–L7 engineering autonomy</title>
+<desc id="desc">Human control to system autonomy. L0 is the default; L1–L4 are observed workflow candidates. L5–L7 are reference definitions, not automatically verified.</desc>
+<rect width="1200" height="330" rx="18" fill="#111c2e"/>
+<g font-family="system-ui, sans-serif">
+<text x="28" y="38" fill="#e9f0fa" font-size="16" font-weight="700">HUMAN CONTROL</text>
+<text x="1172" y="38" text-anchor="end" fill="#e9f0fa" font-size="16" font-weight="700">SYSTEM AUTONOMY</text>
+<path d="M30 65H1170m-8-6 8 6-8 6" stroke="#7fd8cb" stroke-width="2" fill="none"/>
+<rect x="28" y="92" width="132" height="145" rx="9" fill="#1e2c43"/>
+<text x="40" y="128" fill="#7fd8cb" font-size="27" font-weight="750">L0</text>
+<text x="40" y="157" fill="#ffffff" font-size="15" font-weight="600">Manual</text>
+<text x="40" y="189" fill="#c5d2e5" font-size="12">Human writes</text>
+<text x="40" y="209" fill="#c5d2e5" font-size="12">and verifies</text>
+<rect x="173" y="92" width="132" height="145" rx="9" fill="#1e2c43"/>
+<text x="185" y="128" fill="#7fd8cb" font-size="27" font-weight="750">L1</text>
+<text x="185" y="157" fill="#ffffff" font-size="15" font-weight="600">Assisted</text>
+<text x="185" y="189" fill="#c5d2e5" font-size="12">AI suggests</text>
+<text x="185" y="209" fill="#c5d2e5" font-size="12">Human integrates</text>
+<rect x="318" y="92" width="132" height="145" rx="9" fill="#1e2c43"/>
+<text x="330" y="128" fill="#7fd8cb" font-size="27" font-weight="750">L2</text>
+<text x="330" y="157" fill="#ffffff" font-size="15" font-weight="600">Interactive</text>
+<text x="330" y="189" fill="#c5d2e5" font-size="12">AI edits</text>
+<text x="330" y="209" fill="#c5d2e5" font-size="12">Human drives</text>
+<rect x="463" y="92" width="132" height="145" rx="9" fill="#1e2c43"/>
+<text x="475" y="128" fill="#7fd8cb" font-size="27" font-weight="750">L3</text>
+<text x="475" y="157" fill="#ffffff" font-size="15" font-weight="600">Agent</text>
+<text x="475" y="189" fill="#c5d2e5" font-size="12">Human assigns</text>
+<text x="475" y="209" fill="#c5d2e5" font-size="12">bounded tasks</text>
+<rect x="608" y="92" width="132" height="145" rx="9" fill="#1e2c43"/>
+<text x="620" y="128" fill="#7fd8cb" font-size="27" font-weight="750">L4</text>
+<text x="620" y="157" fill="#ffffff" font-size="15" font-weight="600">Agent-first</text>
+<text x="620" y="189" fill="#c5d2e5" font-size="12">Human supervises</text>
+<text x="620" y="209" fill="#c5d2e5" font-size="12">repeated work</text>
+<rect x="753" y="92" width="132" height="145" rx="9" fill="#1e2c43"/>
+<text x="765" y="128" fill="#b6a5ef" font-size="27" font-weight="750">L5</text>
+<text x="765" y="157" fill="#ffffff" font-size="15" font-weight="600">Autonomous</text>
+<text x="765" y="189" fill="#c5d2e5" font-size="12">Agents own</text>
+<text x="765" y="209" fill="#c5d2e5" font-size="12">delivery</text>
+<rect x="898" y="92" width="132" height="145" rx="9" fill="#1e2c43"/>
+<text x="910" y="128" fill="#b6a5ef" font-size="27" font-weight="750">L6</text>
+<text x="910" y="157" fill="#ffffff" font-size="15" font-weight="600">Self-improving</text>
+<text x="910" y="189" fill="#c5d2e5" font-size="12">System improves</text>
+<text x="910" y="209" fill="#c5d2e5" font-size="12">its workflow</text>
+<rect x="1043" y="92" width="132" height="145" rx="9" fill="#1e2c43"/>
+<text x="1055" y="128" fill="#b6a5ef" font-size="27" font-weight="750">L7</text>
+<text x="1055" y="157" fill="#ffffff" font-size="15" font-weight="600">Recursive</text>
+<text x="1055" y="189" fill="#c5d2e5" font-size="12">System improves</text>
+<text x="1055" y="209" fill="#c5d2e5" font-size="12">itself; governed</text>
+<text x="28" y="270" fill="#7fd8cb" font-size="14">L0 default · L1–L4 observed candidates</text>
+<text x="753" y="270" fill="#b6a5ef" font-size="14">L5–L7 reference definitions · Not verified</text>
+<text x="28" y="305" fill="#c5d2e5" font-size="13">Project-defined ruleset 1.0 · Workflow delegation, not model intelligence or developer quality</text>
+</g></svg>

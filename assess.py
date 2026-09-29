@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-assess.py — Local AI Engineering Assessment
+assess.py — Agent Level local analyzer
 
 Specification: docs/AGENT_LEVEL_L0-L7.md
 
@@ -45,9 +45,11 @@ from assessment.anthropic import assess as assess_anthropic, filter_evals, load_
 from assessment.improvement import assess as assess_improvement, render_summary as render_improvement
 from assessment.references import REFERENCES, METHOD_NOTE
 from assessment.evidence import EvidenceReader
+from assessment.guidance import EXPERIMENT_NOTE, recommended_experiment
 
 VERSION = "1.0.0"
 RULESET_VERSION = "1.0"
+# Preserve legacy entrypoint titles and filenames; the unified CLI supplies its brand.
 DEFAULT_REPORT_NAME = "AI Engineering Assessment"
 
 
@@ -229,6 +231,9 @@ def render_report(report, markdown=False):
     if report['gaps']:
         lines.extend(['', heading(f"{level_label(report['next_target'])} Gaps")])
         lines.extend('- ' + check['check'] for check in report['gaps'])
+        experiment = recommended_experiment(report)
+        if experiment:
+            lines.extend(['', heading('Recommended experiment'), experiment, EXPERIMENT_NOTE])
     scope = report['scope']
     lines.extend(['', heading('Data quality'),
                   f"Session files: {scope['files_with_data']} / {scope['files_scanned']}",
@@ -338,7 +343,7 @@ def build_report(m: Metrics, res: dict, since, until,
 
 
 def build_parser():
-    p = argparse.ArgumentParser(description="Claude + Codex AI Engineering Assessment")
+    p = argparse.ArgumentParser(description="Agent Level — local Claude Code and Codex workflow assessment")
     p.add_argument("--source", choices=("claude", "codex", "all"), default="all")
     p.add_argument("--view", choices=("separate", "combined", "both"), default="both")
     p.add_argument("--claude-dir", default=os.environ.get("CLAUDE_DIR", "~/.claude"))
@@ -369,7 +374,7 @@ def build_parser():
     return p
 
 
-def main(argv=None) -> int:
+def main(argv=None, *, default_method='levels') -> int:
     args = build_parser().parse_args(argv)
     report_name = args.report_name.strip()
     stem = report_stem(report_name)
@@ -479,7 +484,7 @@ def main(argv=None) -> int:
             show_progress(f"Generating {fmt.upper()} report…")
             if fmt == "html":
                 from assessment.web import render_html
-                out = render_html(bundle)
+                out = render_html(bundle, default_method=default_method)
             elif fmt == "json":
                 out = json.dumps(bundle, ensure_ascii=False, indent=2)
             else:
@@ -502,21 +507,21 @@ def main(argv=None) -> int:
     return 0
 
 
-def cli(argv=None):
+def cli(argv=None, *, default_method='levels'):
     try:
-        return main(argv)
+        return main(argv, default_method=default_method)
     except BrokenPipeError:
         os._exit(0)
     except KeyboardInterrupt:
         return 130
 
 
-def project_cli():
-    argv = sys.argv[1:]
+def project_cli(argv=None, *, default_method='levels'):
+    argv = list(sys.argv[1:] if argv is None else argv)
     if not any(arg in ("--project-dir", "--eval-results") or
                arg.startswith(("--project-dir=", "--eval-results=")) for arg in argv):
         argv = ["--project-dir", str(Path.cwd()), *argv]
-    return cli(argv)
+    return cli(argv, default_method=default_method)
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-# AI Engineering Levels: L0–L7
+# Agent Level: L0–L7
 
 Ruleset **1.0** supports Claude Code, Codex and combined reports. It assesses the division of engineering work in a selected project and period. It is a project-defined rubric, not a calibrated capability benchmark or an industry certification.
 
@@ -75,7 +75,7 @@ Shell categories are search/read/build/test/git/python/node/docker/ssh/pr/ci/oth
 
 ## 6. Project isolation and combined reports
 
-Both installed commands and `python3 assess.py` default to the current project. Existing target-project logs remain available; cloning this tool does not reset them. The checkout contains no task results, generated reports, enabled personal hooks or prefilled assessment. Bootstrap adds the generated report directory to `.gitignore`. Task-record discovery searches the project and ancestors but filters records by task repository. Global stats-cache is excluded in project mode. Keep task evidence local and exclude its directories from version control.
+Installed assessment commands and `python3 assess.py` default to the current project. Existing target-project logs remain available; cloning this tool does not reset them. The checkout contains no personal task results, logs, reports or enabled hooks; the checked-in example reports use explicitly synthetic data. Bootstrap adds the generated report directory to `.gitignore`. Task-record discovery searches the project and ancestors but filters records by task repository. Global stats-cache is excluded in project mode. Keep task evidence local and exclude its directories from version control.
 
 Combined log statistics add counts, recalculate ratios and union dates. They never join edits and verification across sources.
 

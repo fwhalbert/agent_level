@@ -3,14 +3,21 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai-engineering-assessment"
+name = "agent-level"
 version = "1.0.0"
-description = "Local Claude Code and Codex workflow and task evidence assessment"
+description = "Agent Level: measure AI engineering workflow autonomy from local evidence"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = []
+keywords = ["ai-agents", "claude-code", "codex", "evaluation", "software-engineering"]
+
+[project.urls]
+Repository = "https://github.com/fwhalbert/agent_level"
+Documentation = "https://github.com/fwhalbert/agent_level#readme"
+Issues = "https://github.com/fwhalbert/agent_level/issues"
 
 [project.scripts]
+agent-level = "assessment.cli:main"
 agent-level-assess = "assess:project_cli"
 "agent_level_assess.py" = "assess:project_cli"
 agent-level-record = "agent_level_record:main"

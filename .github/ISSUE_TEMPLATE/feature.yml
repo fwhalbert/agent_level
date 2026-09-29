@@ -1,0 +1,22 @@
+name: Feature proposal
+description: Propose an improvement to analysis, reports, integrations, definitions, or documentation.
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Describe the workflow and why current behavior is insufficient.
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior and acceptance checks
+      description: Include a concrete example and acceptance checks. For parsers, include log format documentation and synthetic fixtures. For level definitions, include evidence and counterexamples.
+    validations:
+      required: true
+  - type: textarea
+    id: tradeoffs
+    attributes:
+      label: Compatibility and alternatives
+      description: Consider privacy, dependencies, existing commands, and evidence semantics.

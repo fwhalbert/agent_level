@@ -274,7 +274,7 @@ class TestReports(TempCase):
                         patch.object(A.sys, 'argv', ['agent-level-assess', *arguments]), \
                         patch.object(A, 'main', return_value=0) as main:
                     self.assertEqual(A.project_cli(), 0)
-                    main.assert_called_once_with(expected)
+                    main.assert_called_once_with(expected, default_method='levels')
 
     def test_progress_describes_stages_without_polluting_json_stdout(self):
         rc, output, error = self.cli(self.fixture() + ['--format', 'json'])

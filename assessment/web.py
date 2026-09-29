@@ -6,6 +6,7 @@ import json
 from .references import REFERENCES, METHOD_NOTE
 from .anthropic import REASONS
 from .history import HISTORY_NOTE
+from .guidance import EXPERIMENT_NOTE, recommended_experiment
 from .web_i18n import attributes as language_attributes, pair, text as t
 from .web_usage import CSS as USAGE_CSS, SCRIPT as USAGE_SCRIPT, render_usage
 
@@ -189,17 +190,16 @@ def _panel(name, report):
         for key, value in scope['diagnostics'].items():
             p.append(f'<p class="method">{t(DIAGNOSTICS.get(key, key))}: {value}</p>')
         p.append('</details>')
-    p.append('</div></div>' + render_usage(name, report) + '<div class="card level-explorer"><h2>' + t('Level requirements and gaps') + '</h2><div class="ladder">')
-    selected = next_level
+    p.append('</div></div>' + _gap_panel(report) + render_usage(name, report) + '<div class="card level-explorer"><h2>' + t('Level requirements and gaps') + '</h2><div class="ladder">')
     for i, title in enumerate(LEVELS):
         achieved = report["levels"][f"L{i}"]["status"] in ("DEFAULT", "OBSERVED")
         cls = (' achieved' if achieved else '') + (' current' if level == i else '')
         state = 'Current level' if level == i else 'Achieved' if achieved else 'Next target' if next_level == i else 'View requirements'
-        p.append(f'<button type="button" class="rung{cls}" id="level-{e(name)}-{i}" aria-controls="requirements-{e(name)}-{i}" aria-expanded="{str(i == selected).lower()}"><b>L{i}</b>{t(title)}<span class="rung-state">{t(state)}</span></button>')
+        p.append(f'<button type="button" class="rung{cls}" id="level-{e(name)}-{i}" aria-controls="requirements-{e(name)}-{i}" aria-expanded="{str(i == next_level).lower()}"><b>L{i}</b>{t(title)}<span class="rung-state">{t(state)}</span></button>')
     p.append('</div>')
     for i, title in enumerate(LEVELS):
         gate = report['levels'][f'L{i}']
-        p.append(f'<div class="level-branch" id="requirements-{e(name)}-{i}" role="region" aria-labelledby="level-{e(name)}-{i}"{ "" if i == selected else " hidden"}><h3>L{i} · {t(title)}</h3>')
+        p.append(f'<div class="level-branch" id="requirements-{e(name)}-{i}" role="region" aria-labelledby="level-{e(name)}-{i}"{ "" if i == next_level else " hidden"}><h3>L{i} · {t(title)}</h3>')
         status = gate['status']
         status_text = {'DEFAULT': 'Achieved by default', 'OBSERVED': 'Behavior observed', 'NOT VERIFIED': 'Unmet / Earlier level unmet'}[status]
         p.append(f'<p class="status {"ok" if status in ("DEFAULT", "OBSERVED") else ""}">{t(status_text)}</p>')
@@ -213,6 +213,21 @@ def _panel(name, report):
     p.append(_improvement_panel(report))
     p.append('</section>')
     return ''.join(p)
+
+
+def _gap_panel(report):
+    if not report['gaps']:
+        return ''
+    parts = ['<div class="card next-level-gap"><h2>' +
+             t('Gap to next level · L{level}', level=report['next_target']) +
+             '</h2><div class="columns"><div><h3>' + t('Missing evidence') + '</h3><ul>']
+    parts.extend('<li>' + t(check['check']) + '</li>' for check in report['gaps'])
+    parts.append('</ul></div><div>')
+    experiment = recommended_experiment(report)
+    if experiment:
+        parts.append('<h3>' + t('Recommended experiment') + '</h3><p>' + t(experiment) + '</p>')
+    parts.append('</div></div><p class="method">' + t(EXPERIMENT_NOTE) + '</p></div>')
+    return ''.join(parts)
 
 
 def _percent(value):

@@ -256,7 +256,6 @@ class Metrics:
         self.humanish_user = 0
         self.user_records = 0
         self.subagent_files = 0
-        self.sidechain_records = 0
 
         self.tools = Counter()
         self.tool_calls = 0
@@ -491,7 +490,6 @@ def scan(claude_dir: Path, since=None, until=None, project_dir=None, progress=No
             has_data = True
             has_sidechain |= sidechain
             m.history.state(sid, ts, 'active', sidechain)
-            m.sidechain_records += int(sidechain)
             if rec['type'] == 'user':
                 m.user_records += 1
                 m.humanish_user += int(is_human_input(rec))
@@ -760,7 +758,6 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progre
                 _observe(m, ts, sid)
                 has_data = True
                 m.history.state(sid, ts, 'active', sidechain)
-                m.sidechain_records += int(sidechain)
                 if is_human:
                     m.user_records += 1
                     m.humanish_user += int(not sidechain)
@@ -797,7 +794,7 @@ def merge_metrics(items):
     merged.sources = set()
     sums = ('files_scanned', 'files_with_data', 'records', 'assistant',
             'assistant_sidechain', 'humanish_user', 'user_records', 'subagent_files',
-            'sidechain_records', 'tool_calls', 'tool_calls_sidechain', 'cache_read',
+            'tool_calls', 'tool_calls_sidechain', 'cache_read',
             'cache_creation', 'output_tokens', 'input_tokens', 'reasoning_output_tokens', 'parse_errors', 'edit_calls',
             'stats_days', 'stats_messages', 'stats_sessions', 'stats_tool_calls')
     for m in items:

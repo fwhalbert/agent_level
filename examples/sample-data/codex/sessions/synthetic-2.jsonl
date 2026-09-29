@@ -1,0 +1,23 @@
+{"type": "session_meta", "timestamp": "2026-09-11T12:00:00Z", "payload": {"id": "synthetic-session-2", "cwd": "/synthetic/agent-level-demo", "source": "cli"}}
+{"type": "event_msg", "timestamp": "2026-09-11T12:00:01Z", "payload": {"type": "user_message", "message": "Synthetic task: update the example and run its checks."}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:02Z", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "Synthetic assistant activity."}]}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:03Z", "payload": {"type": "function_call", "call_id": "synthetic-2-0", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:04Z", "payload": {"type": "function_call", "call_id": "synthetic-2-1", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:05Z", "payload": {"type": "function_call", "call_id": "synthetic-2-2", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:06Z", "payload": {"type": "function_call", "call_id": "synthetic-2-3", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:07Z", "payload": {"type": "function_call", "call_id": "synthetic-2-4", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:08Z", "payload": {"type": "function_call", "call_id": "synthetic-2-5", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:09Z", "payload": {"type": "function_call", "call_id": "synthetic-2-6", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:10Z", "payload": {"type": "function_call", "call_id": "synthetic-2-7", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:11Z", "payload": {"type": "function_call", "call_id": "synthetic-2-8", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:12Z", "payload": {"type": "function_call", "call_id": "synthetic-2-9", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:13Z", "payload": {"type": "function_call", "call_id": "synthetic-2-10", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:14Z", "payload": {"type": "function_call", "call_id": "synthetic-2-11", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:15Z", "payload": {"type": "function_call", "call_id": "synthetic-2-12", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:16Z", "payload": {"type": "function_call", "call_id": "synthetic-2-13", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:17Z", "payload": {"type": "function_call", "call_id": "synthetic-2-14", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:18Z", "payload": {"type": "function_call", "call_id": "synthetic-2-15", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:19Z", "payload": {"type": "function_call", "call_id": "synthetic-2-16", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:20Z", "payload": {"type": "function_call", "call_id": "synthetic-2-17", "name": "exec_command", "arguments": "{\"cmd\": \"rg example README.md\"}"}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:22Z", "payload": {"type": "custom_tool_call", "call_id": "edit-2", "name": "apply_patch", "input": "Synthetic edit marker; never executed."}}
+{"type": "response_item", "timestamp": "2026-09-11T12:00:23Z", "payload": {"type": "function_call", "call_id": "test-2", "name": "exec_command", "arguments": "{\"cmd\": \"python -m unittest discover\"}"}}

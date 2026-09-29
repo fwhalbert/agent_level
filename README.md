@@ -1,39 +1,31 @@
-# AI Engineering Assessment
+# Agent Level
+
+[![Tests](https://github.com/fwhalbert/agent_level/actions/workflows/test.yml/badge.svg)](https://github.com/fwhalbert/agent_level/actions/workflows/test.yml)
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-**An open-source framework for empirical evaluation of AI-assisted software engineering.** Using local Claude Code and Codex session logs and task acceptance evidence, it examines AI agents in real engineering workflows across three dimensions: human–AI collaboration, task completion reliability, and the effects of workflow changes.
-
-The project turns engineering activity into traceable assessment results, helping developers, teams, and researchers identify the limits of automation, verify task delivery, and compare changes to prompts, tools, and collaboration workflows on fixed task suites. Local data processing and offline reports support continuous improvement and empirical research in AI-assisted engineering.
+Agent Level analyzes local **Claude Code and Codex** activity and task evidence
+to show how engineering work is shared between humans and agents.
 
 ## What it does
 
-- **Review your workflow:** estimate an L0–L7 candidate level, explain the evidence, and show missing requirements.
-- **Check task outcomes:** summarize successful, failed, unknown, and unrun tasks from registered acceptance checks.
-- **Compare changes:** examine before/after task results for versioned prompts, tools, or workflows on a fixed task suite.
-- **Explore usage:** view daily token usage, model shares, and cache usage, separately for Claude Code, Codex, or both.
-- **Keep reports local:** generate an offline English/中文 HTML report, or export text, Markdown, and JSON. Reports contain aggregates, not raw conversations or source code.
+- **Assess your workflow:** see an L0–L7 candidate level, supporting evidence, and gaps.
+- **Track task results:** summarize acceptance outcomes from registered checks.
+- **Compare improvements:** compare workflow changes on the same frozen tasks.
+- **Explore usage:** view daily tokens, model shares, and cache usage.
 
-Requires **Python 3.10+**; no third-party runtime dependencies. Existing logs are enough for a first workflow report. Task acceptance statistics require task records.
+Reports support English/中文 offline HTML, text, Markdown, and JSON.
+They contain aggregates, not raw conversations or source code.
 
-## Supported methods and standards
+**Local analysis · No source code upload · Evidence-based · English / 中文 reports**
 
-There is no unified industry standard behind these scores. The current implementation supports:
-
-| Method / protocol | What it answers | Current support |
-|---|---|---|
-| Project-defined L0–L7 ruleset 1.0 | How is engineering work shared between humans and AI? | Default L0; log candidates for L1–L4; reference definitions for L5–L7 |
-| Anthropic-style agent evaluation | Did tasks meet explicit acceptance criteria, and how repeatable are the results? | Daily acceptance outcomes; pass@1, pass@k, and pass^k for complete controlled trial groups |
-| Local task result protocol 1.0 / 1.1 | How can task evidence be recorded and imported? | JSON import; 1.1 adds daily task records and optional improvement comparisons |
-| Project-defined improvement comparison | Did a workflow change improve autonomous task acceptance? | Paired before/after evidence on the same frozen tasks; regressions and evidence status |
-
-The Anthropic method is applied to both Claude Code and Codex evidence. Anthropic does **not** define this project's L0–L7 levels or certify its results. OpenAI evaluation guidance and research such as SWE-bench and METR are references, not additional implemented scoring standards. See [References](#references).
+![L0–L7: human control to system autonomy](docs/assets/agent-level.svg)
 
 ## Quick start
 
-The commands below use **bash/zsh on Linux or macOS**, with Git and Python 3.10+ installed. Use the same terminal for all steps. Installation may need internet access to obtain Python build tools.
-
-Clone the tool and replace `workspace_dir` with the absolute path of the project you want to assess:
+Requires Git and Python 3.10+; no third-party runtime dependencies.
+Run these commands in bash/zsh on Linux or macOS, replacing `workspace_dir`
+with the absolute path of the project you want to assess:
 
 ```bash
 git clone https://github.com/fwhalbert/agent_level.git
@@ -42,44 +34,51 @@ workspace_dir="/absolute/path/to/your-project"
 python3 bootstrap.py --project-dir "$workspace_dir" --venv "$workspace_dir/.venv"
 source "$workspace_dir/.venv/bin/activate"
 cd "$workspace_dir"
-agent-level-assess
+agent-level
 ```
 
-Bootstrap installs the commands, links task recording instructions in `AGENTS.md` and `CLAUDE.md`, and configures session notice hooks. It preserves existing project instructions and adds the report directory to `.gitignore`.
+Bootstrap installs the commands, links task recording instructions in
+`AGENTS.md` and `CLAUDE.md`, and configures session notice hooks.
+Open the printed `file://` link; the default report is
+`out/agent_level/YYYY-MM-DD/agent-level.html`.
 
-Open the printed `file://` link in your browser. The offline report supports English/中文 and defaults to `out/agent_level/YYYY-MM-DD/ai-engineering-assessment.html`. Without matching logs, the level defaults to L0; task outcome statistics require acceptance records.
+Start a new Claude Code or Codex session and assign an engineering task.
+The agent records acceptance checks and results through the [recording workflow](AGENTS.md).
+The hook only displays “Auto eval enabled.”; new Codex hooks require trust in `/hooks`.
+Run `agent-level` again after tasks finish to update the report.
 
-Start a new Claude Code or Codex session in the project and give it an engineering task. The agent follows the [recording workflow](AGENTS.md) to register acceptance criteria before work and record the check afterward. The hook only displays “Auto eval enabled.”; Codex may require review and trust in `/hooks`.
+Activate the venv in each new terminal. Keep the tool checkout available;
+rerun bootstrap after moving it or changing the venv.
+For analyzer-only installation and more options, see [setup](docs/SETUP.md)
+or run `agent-level --help`.
 
-Run `agent-level-assess` again after tasks finish. Activate the venv in each new terminal. Keep the tool checkout available and rerun bootstrap if you move it or change the venv. For command options, run `agent-level-assess --help`.
+## L0–L7 framework
 
-## Level assessment
+| Level | Engineering workflow | Human role |
+|---|---|---|
+| L0 — Manual | Human writes and verifies | Developer |
+| L1 — Assisted | AI suggests; human integrates | Developer |
+| L2 — Interactive | AI edits; human drives steps | Step decision maker |
+| L3 — Agent | Human assigns a task; agent edits and attempts verification | Task initiator |
+| L4 — Agent-first | Edit/verify workflow repeats across sessions and days | Supervisor |
+| L5 — Autonomous | Agents pick up tasks, deliver changes, repair CI, track outcomes | Specification and acceptance owner |
+| L6 — Self-improving | System improves prompts, tools and workflows with evaluation and rollback | Improvement and governance owner |
+| L7 — Recursive | System develops successive systems under human governance | Research and governance owner |
 
-L0–L7 describes the division of engineering work between humans and AI. A higher number represents a different degree of delegation and system capability; choose the workflow that fits your work.
+`DEFAULT` is the L0 baseline, including when no logs match. `OBSERVED` means
+logs support an L1–L4 candidate, not task success. L5–L7 remain `NOT VERIFIED`
+reference definitions. Task acceptance results are assessed separately.
 
-| Level | Name | What it looks like | Main human role |
-|---|---|---|---|
-| L0 | Manual Engineering | Humans implement and verify; AI is at most a reference | Developer |
-| L1 | AI-assisted Coding | AI explains, suggests, or generates snippets; humans integrate them | Developer |
-| L2 | Interactive AI Coding | AI edits files directly; humans frequently choose the next step | Step decision maker |
-| L3 | Agent Coding | Given a task, an agent edits and attempts verification | Task initiator |
-| L4 | Agent-first Engineering | The edit-and-verify workflow repeats across sessions and days | Supervisor |
-| L5 | Autonomous Engineering | An agent picks up tasks, delivers changes, repairs CI, and tracks outcomes | Specification and acceptance owner |
-| L6 | Self-improving Engineering System | Results drive changes to prompts, tools, or workflows, with evaluation and rollback | Improvement and governance owner |
-| L7 | Governed Recursive Self-Improvement | A system researches, builds, evaluates, and deploys a next-generation system under human governance | Research and governance owner |
-
-**How to read the result:** `DEFAULT` means L0 is achieved by default, without requiring logs or human confirmation. `OBSERVED` means the available log behavior supports a candidate level, not that tasks passed. `NOT VERIFIED` means the required behavior is not established; L5–L7 remain reference definitions without automatic assessment. L0 remains achieved at higher levels; L7 is an optional research direction.
-
-See [level rules and log observation limits](docs/AGENT_LEVEL_L0-L7.md) for thresholds and evidence requirements.
+The project-defined ruleset **1.0** describes workflow autonomy, not developer
+ability or model intelligence. It is not an industry standard.
+[Full definitions and thresholds](docs/AGENT_LEVEL_L0-L7.md).
 
 ## References
 
-Start with the project guides:
-
-- [L0–L7 definitions and observation rules](docs/AGENT_LEVEL_L0-L7.md): level meanings, thresholds, and evidence states.
-- [Anthropic-style evaluation and JSON protocol](docs/ANTHROPIC.md): task outcomes, graders, and repeated-trial statistics.
-- [Before/after improvement evaluation](docs/IMPROVEMENT_EVALUATION.md): controlled comparisons and evidence requirements.
-- [OpenAI evaluation guidance and project scope](docs/OPENAI.md): how the guidance maps to current capabilities and gaps.
-- [Sources and references](docs/REFERENCES.md): primary sources from Anthropic, OpenAI, SWE-bench, METR, SPACE, DORA, DeepMind, and NIST, with their relevance and limits.
-
-These sources inform the methods; they do not validate this project's level thresholds or imply endorsement.
+- [Setup and task recording](docs/SETUP.md)
+- [Task evaluation and JSON protocol](docs/ANTHROPIC.md)
+- [Before/after improvement evaluation](docs/IMPROVEMENT_EVALUATION.md)
+- [OpenAI guidance and implementation scope](docs/OPENAI.md)
+- [Methods, primary sources, and limitations](docs/REFERENCES.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)

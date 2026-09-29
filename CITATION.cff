@@ -1,0 +1,14 @@
+cff-version: 1.2.0
+message: "If you use Agent Level, cite this repository and the revision evaluated."
+type: software
+title: Agent Level
+abstract: An empirical framework for measuring the autonomy of AI engineering workflows from local evidence.
+authors:
+  - name: Agent Level contributors
+repository-code: https://github.com/fwhalbert/agent_level
+url: https://github.com/fwhalbert/agent_level
+version: 1.0.0
+keywords:
+  - AI agents
+  - engineering autonomy
+  - workflow evaluation

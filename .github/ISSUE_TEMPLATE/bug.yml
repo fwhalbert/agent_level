@@ -1,0 +1,25 @@
+name: Bug report
+description: Report incorrect behavior with a synthetic reproduction.
+body:
+  - type: markdown
+    attributes:
+      value: Do not attach personal session logs, source code, task journals, or secrets. For sensitive findings, follow SECURITY.md.
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Agent Level revision/version, Python version, OS, and agent/log format version if known.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: Command, synthetic input, expected result, and actual result.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence and impact
+      description: Aggregate diagnostics, affected evidence state, and any known workaround. Review output for sensitive labels.

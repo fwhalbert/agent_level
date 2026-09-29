@@ -6,6 +6,15 @@ from .references import METHOD_NOTE
 
 
 ZH = {
+    'Gap to next level · L{level}': '下一等级的差距 · L{level}',
+    'Missing evidence': '缺少的证据',
+    'Recommended experiment': '建议的实验',
+    'An optional experiment to collect evidence, not a requirement to adopt more autonomy or proof of a higher level.': '这是收集证据的可选实验，不要求采用更高自主性，也不证明已达到更高等级。',
+    'Check the selected project, date range, and log locations first. If you want to try AI assistance, use one bounded question and retain its activity log.': '先检查所选项目、日期范围和日志位置。如果希望尝试 AI 辅助，可提出一个范围明确的问题并保留活动日志。',
+    'Try one reversible code change with AI editing, review the diff, and run an explicit acceptance check. Retain the activity and acceptance evidence.': '可尝试让 AI 完成一次可撤销的代码修改，审阅差异并运行明确的验收检查，保留活动与验收证据。',
+    'Assign a bounded task with explicit acceptance criteria. Let the agent edit and attempt verification in the same session; record the outcome and human interventions. Collect representative activity, not extra calls to reach a threshold.': '指定一个范围明确、验收条件清晰的任务，让 Agent 在同一会话中修改并尝试验证，记录结果和人工干预。收集有代表性的活动，不为凑阈值增加调用。',
+    'Repeat bounded tasks across sessions and days, retaining edit/verify activity, acceptance outcomes, and human interventions. Repetition alone does not prove successful delivery.': '在不同会话和日期重复执行范围明确的任务，保留修改/验证活动、验收结果与人工干预记录。重复行为本身不能证明交付成功。',
+    'Try a controlled task queue with explicit acceptance checks and human control boundaries. Record task pickup, PR delivery, CI recovery, outcomes, and interventions. L5 remains unverified by this analyzer.': '可尝试具有明确验收检查和人工控制边界的受控任务队列，记录任务领取、PR 交付、CI 恢复、结果与干预。此分析器仍不验证 L5。',
     'Not assessed from session logs': '会话日志无法评定此能力',
 
     'AI assistance or investigation': 'AI 辅助或调查活动',

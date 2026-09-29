@@ -53,6 +53,11 @@ class TestInstalledCLI(unittest.TestCase):
             bin_dir = venv / 'bin'
             self.assertEqual(run(str(bin_dir / 'agent-level-assess'), '--version').strip(), '1.0.0')
             self.assertEqual(run(str(bin_dir / 'agent_level_assess.py'), '--version').strip(), '1.0.0')
+            unified = str(bin_dir / 'agent-level')
+            self.assertEqual(run(unified, '--version').strip(), '1.0.0')
+            for command in ([], ['assess'], ['record'], ['compare']):
+                self.assertIn('usage:', run(unified, *command, '--help'))
+            self.assertEqual(run(python, '-c', 'from importlib.metadata import version; print(version("agent-level"))').strip(), '1.0.0')
             notice = run(str(bin_dir / 'agent-level-session-notice'),
                          input=json.dumps({'source': 'startup', 'cwd': str(workspace)}))
             self.assertEqual(json.loads(notice)['systemMessage'], 'Auto eval enabled.')
@@ -68,3 +73,19 @@ class TestInstalledCLI(unittest.TestCase):
             counts = report['reports']['codex']['anthropic_evaluation']['counts']
             self.assertEqual(counts['verified_trials'], 1)
             self.assertEqual(counts['successful_trials'], 1)
+            # Build and install a regular wheel, then remove access to the checkout.
+            wheels = root / 'wheels'
+            run(python, '-m', 'pip', 'wheel', '--no-deps', '--no-build-isolation',
+                '--wheel-dir', str(wheels), str(source))
+            wheel = next(wheels.glob('agent_level-1.0.0-*.whl'))
+            run(python, '-m', 'pip', 'install', '--force-reinstall', '--no-deps', str(wheel))
+            source.rename(root / 'moved-source')
+            args = ['--claude-dir', str(empty_logs), '--codex-dir', str(empty_logs),
+                    '--no-auto-evals']
+            run(unified, *args)
+            self.assertEqual(len(list(workspace.glob('out/agent_level/*/agent-level.html'))), 1)
+            for executable in ('agent-level', 'agent-level-assess', 'agent_level_assess.py'):
+                report = json.loads(run(str(bin_dir / executable), *args, '--format', 'json', '-o', '-'))
+                self.assertEqual(report['reports']['combined']['current_level'], 0)
+                self.assertEqual(report['report_name'], 'Agent Level' if executable == 'agent-level'
+                                 else 'AI Engineering Assessment')
