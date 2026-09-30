@@ -23,26 +23,35 @@ files; reinstall `agent-level` if that happens.
 
 Installing the analyzer is enough to read existing activity. To have agents
 register acceptance checks before work and record their results afterward, run
-bootstrap from a persistent checkout (bash/zsh on Linux or macOS):
+one command from a source checkout (bash/zsh on Linux or macOS):
 
 ```bash
-git clone https://github.com/fwhalbert/agent_level.git
-cd agent_level
-workspace_dir="/absolute/path/to/your-project"
-python3 bootstrap.py --project-dir "$workspace_dir" --venv "$workspace_dir/.venv"
-source "$workspace_dir/.venv/bin/activate"
-cd "$workspace_dir"
-agent-level-assess
+./agent-level setup --project-dir /absolute/path/to/your-project
 ```
 
-Bootstrap installs the package, adds an absolute reference to this checkout's
-`AGENTS.md` in the workspace's `AGENTS.md` and `CLAUDE.md`, configures session notice
+The checkout's `agent-level` executable works before package installation.
+Setup creates or reuses the selected venv, installs the package when needed,
+then adds an absolute reference to the installed task evidence workflow in
+the workspace's `AGENTS.md` and `CLAUDE.md`, configures session notice
 hooks, and preserves existing instructions. It does not create, read or modify
 the target project's `.gitignore`; the project manages its own ignore rules. Without
-`--venv`, it selects an existing workspace `venv`, otherwise `.venv`.
+`--venv`, it uses the venv running the command. When run outside a venv from a checkout,
+it selects an existing workspace `venv`, otherwise `.venv`, and installs there.
 
-Keep the tool checkout available. Rerun bootstrap after moving it or changing the
-venv. Activate the venv in each new terminal. Start a new Claude Code or Codex
+It prints an absolute report command with `--project-dir`, so you can run it from
+any directory without activating a venv. The workspace's `AGENTS.md` also contains
+the absolute recorder and report commands; agents can follow the recording workflow
+without relying on shell activation or PATH changes.
+
+If the package is already installed, use `agent-level setup` in your project,
+or invoke `/path/to/venv/bin/agent-level setup --project-dir /path/to/workspace`
+directly. Use `--project-dir /path/to/workspace` to select another workspace. From a source
+checkout, `--venv /path/to/venv` installs into a different environment. With a wheel
+installation, install Agent Level in the desired venv and run its setup command
+there. Wheels include the recording workflow and do not need the source checkout.
+
+Keep the tool installation available. Rerun setup after moving it or changing the
+venv. Start a new Claude Code or Codex
 session and assign an engineering task. Follow [the task evidence workflow](../AGENTS.md).
 The notice hook only displays “Auto eval enabled.”; new Codex project hooks require
 review and trust in `/hooks` before running. Installation alone does not enable
@@ -56,6 +65,10 @@ Captured acceptance output may contain sensitive information. Run the analyzer
 again after tasks finish to include the new evidence.
 
 ## Existing commands
+
+`./agent-level` runs the public CLI from a checkout without prior installation;
+`agent-level setup` is the installed recording setup command. The source-only
+`bootstrap.py` remains a compatibility entrypoint for existing automation.
 
 `agent-level-assess`, `agent_level_assess.py`, `agent-level-record`,
 `agent-level-session-notice`, and `python3 assess.py` remain available. Existing

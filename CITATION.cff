@@ -8,6 +8,7 @@ authors:
 repository-code: https://github.com/fwhalbert/agent_level
 url: https://github.com/fwhalbert/agent_level
 version: 1.0.0
+license: MIT
 keywords:
   - AI agents
   - engineering autonomy

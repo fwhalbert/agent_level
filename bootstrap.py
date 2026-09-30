@@ -19,6 +19,9 @@ IMPORT_START = "<!-- agent-level:task-evidence-import:start -->"
 IMPORT_END = "<!-- agent-level:task-evidence-import:end -->"
 IMPORT_HEADER = ("## agent_level: automatic task evidence\n\n"
                  "Read and follow the task evidence workflow in:\n")
+COMMANDS_HEADER = ("\n## agent_level: installed commands\n\n"
+                   "Use these commands without activating a virtual environment:\n")
+PUBLIC_COMMANDS = ('agent-level', 'agent-level-record', 'agent-level-session-notice')
 
 
 def write_text(path, content):
@@ -37,19 +40,25 @@ def write_text(path, content):
             os.unlink(temporary)
 
 
-def enable_instructions(workspace, source):
-    instructions = source / "AGENTS.md"
+def enable_instructions(workspace, source, *, instructions=None, venv=None):
+    instructions = instructions or source / "AGENTS.md"
     source_text = instructions.read_text(encoding="utf-8")
     start = source_text.find(INSTRUCTION_START)
     end = source_text.find(INSTRUCTION_END, start)
     if start < 0 or end < 0:
         raise ValueError("task evidence section is missing from source AGENTS.md")
     section = f"{IMPORT_HEADER}@{instructions}\n"
+    if venv:
+        recorder = shlex.quote(str(venv / 'bin' / 'agent-level-record'))
+        report = report_command(workspace, venv)
+        section += COMMANDS_HEADER + f"- Recorder: `{recorder}` (append the workflow arguments).\n- Report: `{report}`.\n"
     agents = workspace / "AGENTS.md"
     if agents.is_symlink():
         raise ValueError(f"refusing to replace symlink: {agents}")
     current = agents.read_text(encoding="utf-8") if agents.exists() else ""
-    reference = re.search(rf"(?m)^{re.escape(IMPORT_HEADER)}@[^\n]+\n?", current)
+    reference = re.search(
+        rf"(?m)^{re.escape(IMPORT_HEADER)}@[^\n]+\n?"
+        rf"(?:{re.escape(COMMANDS_HEADER)}- Recorder: [^\n]+\n- Report: [^\n]+\n)?", current)
     opening, closing = INSTRUCTION_START, INSTRUCTION_END
     if IMPORT_START in current or IMPORT_END in current:
         opening, closing = IMPORT_START, IMPORT_END
@@ -168,14 +177,14 @@ def remove_generated_entrypoints(project_dir):
             path.unlink()
 
 
-def enable_workspace(workspace, venv, source):
+def enable_workspace(workspace, venv, source, *, instructions=None):
     workspace = Path(workspace).expanduser().resolve(strict=True)
     source = Path(source).resolve(strict=True)
     venv = Path(venv).expanduser().resolve(strict=True)
-    if not workspace.is_dir() or not (source / "AGENTS.md").is_file():
+    if not workspace.is_dir() or not (instructions or source / "AGENTS.md").is_file():
         raise ValueError("workspace or task evidence instructions are missing")
     command = shlex.quote(str(venv / "bin" / "agent-level-session-notice"))
-    enable_instructions(workspace, source)
+    enable_instructions(workspace, source, instructions=instructions, venv=venv)
     enable_hook(workspace / ".codex" / "hooks.json", command)
     enable_hook(workspace / ".claude" / "settings.json", command)
     remove_generated_entrypoints(workspace)
@@ -196,30 +205,55 @@ def install_package(source, venv):
     subprocess.run(pip + ["-e", str(source)], check=True)
 
 
-def main(argv=None):
-    parser = argparse.ArgumentParser(description=__doc__)
+def setup_main(argv=None):
+    """Public setup uses the active installation, including a standalone wheel."""
+    return main(argv, public=True)
+
+
+def report_command(workspace, venv):
+    return shlex.join([str(venv / 'bin' / 'agent-level'), '--project-dir', str(workspace)])
+
+
+def commands_available(venv):
+    return all((venv / 'bin' / name).is_file() for name in PUBLIC_COMMANDS)
+
+
+def main(argv=None, *, public=False):
+    parser = argparse.ArgumentParser(
+        prog="agent-level setup" if public else None,
+        description="Install Agent Level if needed and enable task recording in one step.")
     parser.add_argument("--project-dir", type=Path, nargs="?", const=Path("."),
                         default=Path("."), help="default: current directory")
-    parser.add_argument("--venv", type=Path, help="default: existing project/venv, else project/.venv")
+    parser.add_argument("--venv", type=Path, help=(
+        "default: active venv, else existing project/venv or project/.venv" if public else
+        "default: existing project/venv, else project/.venv"))
     args = parser.parse_args(argv)
     try:
         workspace = args.project_dir.expanduser().resolve(strict=True)
         if not workspace.is_dir():
             raise ValueError("project directory must be a directory")
         source = Path(__file__).resolve().parent
-        venv = args.venv or (workspace / "venv" if (workspace / "venv").exists()
+        checkout = (source / "pyproject.toml").is_file() and (source / "AGENTS.md").is_file()
+        instructions = source / "AGENTS.md" if checkout else source / "assessment" / "task_evidence.md"
+        active_venv = Path(sys.prefix) if public and sys.prefix != sys.base_prefix else None
+        venv = args.venv or active_venv or (workspace / "venv" if (workspace / "venv").exists()
                              else workspace / ".venv")
         venv = venv.expanduser().absolute()
-        install_package(source, venv)
-        enable_workspace(workspace, venv, source)
+        if not public or venv.resolve() != Path(sys.prefix).resolve() or not commands_available(venv):
+            if not checkout:
+                raise ValueError("install agent-level in the target venv, activate it, then run agent-level setup")
+            install_package(source, venv)
+        if public and not commands_available(venv):
+            raise ValueError("Agent Level commands are missing after installation; check this venv")
+        enable_workspace(workspace, venv, source, instructions=instructions)
     except (OSError, ValueError, subprocess.CalledProcessError) as exc:
         print(f"[error] setup failed: {exc}", file=sys.stderr)
         return 2
     print(f"[ok] installed and enabled in {workspace}")
-    print("[next] Run in your shell (bash/zsh):")
-    print(f"  source {shlex.quote(str(venv / 'bin' / 'activate'))}")
-    print(f"  cd {shlex.quote(str(workspace))}")
-    print("  agent-level-assess")
+    print("[next] View the report (no environment activation required):")
+    print(f"  {report_command(workspace, venv)}")
+    if public:
+        print("[next] Start a new agent session. Trust a new Codex hook in /hooks before it runs.")
     return 0
 
 

@@ -7,6 +7,8 @@ name = "agent-level"
 version = "1.0.0"
 description = "Agent Level: measure AI engineering workflow autonomy from local evidence"
 readme = "README.md"
+license = {file = "LICENSE"}
+classifiers = ["License :: OSI Approved :: MIT License"]
 requires-python = ">=3.10"
 dependencies = []
 keywords = ["ai-agents", "claude-code", "codex", "evaluation", "software-engineering"]
@@ -25,4 +27,7 @@ agent-level-session-notice = "auto_eval_session_notice:main"
 
 [tool.setuptools]
 packages = ["assessment"]
-py-modules = ["assess", "agent_level_record", "auto_eval_session_notice"]
+py-modules = ["assess", "agent_level_record", "auto_eval_session_notice", "bootstrap"]
+
+[tool.setuptools.package-data]
+assessment = ["task_evidence.md"]

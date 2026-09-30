@@ -19,16 +19,20 @@ def main(argv=None):
     commands.add_parser('assess', help='Analyze local activity and generate an offline report')
     commands.add_parser('record', help='Register acceptance, record human review, or locate task evidence')
     commands.add_parser('compare', help='Open the existing before/after evidence comparison view')
+    commands.add_parser('setup', help='Install if needed and enable task recording in one step')
     if args and args[0] in ('-h', '--help', '--version'):
         parser.parse_args(args)
         return 0
     command = 'assess'
     if args and not args[0].startswith('-'):
         command = args.pop(0)
-        if command not in ('assess', 'record', 'compare'):
+        if command not in ('assess', 'record', 'compare', 'setup'):
             parser.error(f'unknown command: {command}')
     if command == 'record':
         return agent_level_record.main(args)
+    if command == 'setup':
+        from bootstrap import setup_main
+        return setup_main(args)
     return assess.project_cli(
         ['--report-name', 'Agent Level', *args],
         default_method='improvement' if command == 'compare' else 'levels',

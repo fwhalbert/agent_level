@@ -84,8 +84,9 @@ navigate externally only when opened by the reader.
 
 ## Validation
 
-`python -m unittest discover -v` covers parser behavior, source isolation, evidence
-integrity, missing-data semantics, offline rendering and CLI behavior. Supply
-`AGENT_LEVEL_TEST_WHEELHOUSE` for installation tests; see [contributing](../CONTRIBUTING.md).
+`python -m unittest discover -v` runs directly from the source checkout and covers
+parser behavior, source isolation, evidence integrity, missing-data semantics,
+offline rendering and CLI behavior. It does not verify package installation or
+built wheels. See [contributing](../CONTRIBUTING.md) for the development setup.
 `examples/generate_report.py` renders fixed synthetic inputs without scanning a home
 directory. See [level definitions](AGENT_LEVEL_L0-L7.md) for exact gates and limits.

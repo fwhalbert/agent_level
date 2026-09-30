@@ -25,31 +25,29 @@ They contain aggregates and opaque diagnostic references, not raw conversations 
 ## Quick start
 
 Requires Git and Python 3.10+; no third-party runtime dependencies.
-Run these commands in bash/zsh on Linux or macOS, replacing `workspace_dir`
-with the absolute path of the project you want to assess:
+From a checkout, run one setup command in bash/zsh on Linux or macOS,
+replacing the project path with the project you want to assess:
 
 ```bash
 git clone https://github.com/fwhalbert/agent_level.git
 cd agent_level
-workspace_dir="/absolute/path/to/your-project"
-python3 bootstrap.py --project-dir "$workspace_dir" --venv "$workspace_dir/.venv"
-source "$workspace_dir/.venv/bin/activate"
-cd "$workspace_dir"
-agent-level
+./agent-level setup --project-dir /absolute/path/to/your-project
 ```
 
-Bootstrap installs the commands, links task recording instructions in
-`AGENTS.md` and `CLAUDE.md`, and configures session notice hooks.
-Open the printed `file://` link; the default report is
+Setup creates or reuses a venv, installs the commands, links task recording
+instructions in `AGENTS.md` and `CLAUDE.md`, and configures session notice hooks.
+It prints a report command you can run from any directory without activating
+the venv. The workspace instructions also include the recorder's absolute command.
+If Agent Level is already installed, use `agent-level setup` in your project.
+Run the printed report command, then open its `file://` link; the default report is
 `out/agent_level/YYYY-MM-DD/agent-level.html`.
 
 Start a new Claude Code or Codex session and assign an engineering task.
 The agent records acceptance checks and results through the [recording workflow](AGENTS.md).
 The hook only displays “Auto eval enabled.”; new Codex hooks require trust in `/hooks`.
-Run `agent-level` again after tasks finish to update the report.
+Run the printed report command after tasks finish to update the report.
 
-Activate the venv in each new terminal. Keep the tool checkout available;
-rerun bootstrap after moving it or changing the venv.
+Keep the tool checkout available; rerun setup after moving it or changing the venv.
 For analyzer-only installation and more options, see [setup](docs/SETUP.md)
 or run `agent-level --help`.
 
@@ -83,4 +81,4 @@ ability or model intelligence. It is not an industry standard.
 - [OpenAI guidance and implementation scope](docs/OPENAI.md)
 - [Methods, primary sources, and limitations](docs/REFERENCES.md)
 - [Architecture](docs/ARCHITECTURE.md)
-- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md)
+- [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [MIT License](LICENSE)

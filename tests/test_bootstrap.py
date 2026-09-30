@@ -6,7 +6,7 @@ import subprocess
 import unittest
 from unittest.mock import patch
 
-from auto_eval_session_notice import enabled
+from auto_eval_session_notice import enabled, INSTRUCTION_START, INSTRUCTION_END
 from bootstrap import IMPORT_END, IMPORT_START, assess_entrypoint_content, enable_workspace, main
 
 
@@ -14,6 +14,11 @@ SOURCE = Path(__file__).resolve().parents[1]
 
 
 class TestBootstrap(unittest.TestCase):
+    def test_packaged_workflow_matches_canonical_instructions(self):
+        source = (SOURCE / 'AGENTS.md').read_text()
+        section = source[source.index(INSTRUCTION_START):source.index(INSTRUCTION_END) + len(INSTRUCTION_END)]
+        self.assertEqual((SOURCE / 'assessment/task_evidence.md').read_text(), section + '\n')
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -30,9 +35,11 @@ class TestBootstrap(unittest.TestCase):
         first = (self.workspace / "AGENTS.md").read_text()
         first_claude = (self.workspace / "CLAUDE.md").read_text()
         self.assertTrue(enabled(self.workspace))
-        self.assertEqual(first, "## agent_level: automatic task evidence\n\n"
-                         "Read and follow the task evidence workflow in:\n"
-                         f"@{SOURCE / 'AGENTS.md'}\n")
+        self.assertTrue(first.startswith("## agent_level: automatic task evidence\n\n"
+                                        "Read and follow the task evidence workflow in:\n"
+                                        f"@{SOURCE / 'AGENTS.md'}\n"))
+        self.assertIn(f"- Recorder: `{self.venv / 'bin' / 'agent-level-record'}`", first)
+        self.assertIn('without activating a virtual environment', first)
         self.assertNotIn("agent_level_record.py start", first)
         self.assertNotIn("<!-- agent-level:task-evidence:start -->", first)
         self.assertEqual(first_claude, "@AGENTS.md\n")
@@ -120,9 +127,12 @@ class TestBootstrap(unittest.TestCase):
                           f"@/old/source/AGENTS.md\n{IMPORT_END}\n" + after)
         enable_workspace(self.workspace, self.venv, SOURCE)
         content = agents.read_text()
-        self.assertEqual(content, before + "## agent_level: automatic task evidence\n\n"
-                         "Read and follow the task evidence workflow in:\n"
-                         f"@{SOURCE / 'AGENTS.md'}\n" + after)
+        self.assertTrue(content.startswith(before + "## agent_level: automatic task evidence\n\n"
+                                          "Read and follow the task evidence workflow in:\n"
+                                          f"@{SOURCE / 'AGENTS.md'}\n"))
+        self.assertTrue(content.endswith(after))
+        self.assertEqual(content.count('## agent_level: installed commands'), 1)
+        self.assertIn(str(self.venv / 'bin' / 'agent-level-record'), content)
         self.assertTrue(enabled(self.workspace))
         enable_workspace(self.workspace, self.venv, SOURCE)
         self.assertEqual(agents.read_text(), content)
@@ -190,6 +200,9 @@ class TestBootstrap(unittest.TestCase):
         self.assertTrue(content.endswith(after))
         self.assertIn(f'@{relocated / "AGENTS.md"}\n', content)
         self.assertNotIn(f'@{SOURCE / "AGENTS.md"}', content)
+        self.assertEqual(content.count('## agent_level: installed commands'), 1)
+        self.assertIn(str(venv / 'bin' / 'agent-level-record'), content)
+        self.assertNotIn(str(self.venv / 'bin' / 'agent-level-record'), content)
         for config in (path, self.workspace / '.claude' / 'settings.json'):
             items = [item for entry in json.loads(config.read_text())['hooks']['SessionStart']
                      for item in entry['hooks']]

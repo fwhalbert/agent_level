@@ -2,29 +2,23 @@
 
 Contributions can improve bug fixes, log parsers, level definitions, evaluation
 methodology, report UI, documentation, and integrations. Start with a small issue
-that describes the behavior and evidence. No license grant has been added to this
-checkout.
+that describes the behavior and evidence. This project is licensed under the
+[MIT License](LICENSE).
 
 ## Development
+
+Run the source tests from the repository root with Python 3.10+ and Git:
 
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-python -m pip install -e .
 python -m unittest discover -v
 ```
 
-Use Python 3.10+ and the standard library for runtime code. CI covers 3.10–3.13.
-The installation test is skipped unless local build wheels are supplied. To run it:
-
-```bash
-python -m pip download --dest /tmp/agent-level-wheels 'setuptools>=64' wheel
-AGENT_LEVEL_TEST_WHEELHOUSE=/tmp/agent-level-wheels python -m unittest discover -v
-```
-
-The smoke test installs into a temporary venv, checks bootstrap and legacy aliases,
-then installs a regular wheel and checks commands away from the source checkout.
-The wheel download needs network access; the installation test itself is offline.
+Runtime code and tests use the Python standard library. Source tests run directly
+from the checkout without installing the package or downloading build dependencies.
+CI covers Python 3.10–3.13. The suite checks source behavior; it does not verify
+package installation or built wheels.
 
 ## Evidence and review
 

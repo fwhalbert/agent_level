@@ -4,14 +4,24 @@ import io
 import json
 import os
 from pathlib import Path
+import shlex
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from assessment.cli import main
 from examples.generate_report import sample_bundle, main as generate_example
 
 
 class TestUnifiedCLI(unittest.TestCase):
+    def installed_commands(self, environment):
+        directory = environment / 'bin'
+        directory.mkdir(parents=True, exist_ok=True)
+        for command in ('agent-level', 'agent-level-record', 'agent-level-session-notice'):
+            (directory / command).touch()
+
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)
@@ -31,7 +41,7 @@ class TestUnifiedCLI(unittest.TestCase):
         return status, out.getvalue(), err.getvalue()
 
     def test_help_and_version(self):
-        for command in ([], ['assess'], ['compare'], ['record']):
+        for command in ([], ['assess'], ['compare'], ['record'], ['setup']):
             with self.subTest(command=command):
                 status, out, _ = self.run_cli(*command, '--help')
                 self.assertEqual(status, 0)
@@ -39,6 +49,84 @@ class TestUnifiedCLI(unittest.TestCase):
         self.assertEqual(self.run_cli('--version')[:2], (0, '1.0.0\n'))
         self.assertIn('--source', self.run_cli('assess', '--help')[1])
         self.assertIn('--eval-results', self.run_cli('compare', '--help')[1])
+        self.assertIn('--project-dir', self.run_cli('setup', '--help')[1])
+        self.assertNotIn('bootstrap.py', self.run_cli('--help')[1])
+
+    def test_setup_uses_active_installation_and_preserves_workspace_configuration(self):
+        environment = self.root / 'tool-env'
+        notice = environment / 'bin/agent-level-session-notice'
+        self.installed_commands(environment)
+        (self.root / 'AGENTS.md').write_text('Keep these project rules.\n')
+        hook = self.root / '.codex/hooks.json'
+        hook.parent.mkdir()
+        existing = {'hooks': {'SessionStart': [{'hooks': [
+            {'type': 'command', 'command': 'custom-notice'}]}]}}
+        hook.write_text(json.dumps(existing))
+        with patch('bootstrap.sys.prefix', str(environment)), patch('bootstrap.install_package') as install:
+            status, out, err = self.run_cli('setup')
+            self.assertEqual(status, 0, err)
+            install.assert_not_called()
+            self.assertIn('agent-level', out)
+            self.assertIn('/hooks', out)
+            config_paths = [self.root / 'AGENTS.md', self.root / 'CLAUDE.md', hook,
+                            self.root / '.claude/settings.json']
+            before = [p.read_bytes() for p in config_paths]
+            self.assertEqual(self.run_cli('setup')[0], 0)
+            self.assertEqual([p.read_bytes() for p in config_paths], before)
+        self.assertIn('Keep these project rules.', (self.root / 'AGENTS.md').read_text())
+        hooks = json.loads(hook.read_text())['hooks']['SessionStart']
+        self.assertEqual(hooks[0], existing['hooks']['SessionStart'][0])
+        self.assertEqual(hooks[1]['hooks'][0]['command'], str(notice))
+        self.assertFalse((self.root / '.venv').exists())
+
+    def test_setup_explicit_venv_installs_from_checkout(self):
+        environment = self.root / 'selected-env'
+        notice = environment / 'bin/agent-level-session-notice'
+        self.installed_commands(environment)
+        with patch('bootstrap.install_package') as install:
+            status, _, err = self.run_cli('setup', '--venv', str(environment))
+            self.assertEqual(status, 0, err)
+            install.assert_called_once_with(Path(__file__).resolve().parents[1], environment)
+
+    def test_setup_installs_in_an_active_venv_that_has_no_cli(self):
+        environment = self.root / 'empty-env'
+        environment.mkdir()
+        with patch('bootstrap.sys.prefix', str(environment)), \
+                patch('bootstrap.install_package', side_effect=lambda source, venv: self.installed_commands(venv)) as install:
+            status, _, err = self.run_cli('setup')
+            self.assertEqual(status, 0, err)
+            install.assert_called_once_with(Path(__file__).resolve().parents[1], environment)
+
+    def test_setup_creates_default_environment_and_prints_a_direct_report_command(self):
+        workspace = self.root / 'project with spaces'
+        workspace.mkdir()
+        environment = workspace / '.venv'
+        with patch('bootstrap.sys.prefix', sys.base_prefix), \
+                patch('bootstrap.install_package', side_effect=lambda source, venv: self.installed_commands(venv)) as install:
+            status, out, err = self.run_cli('setup', '--project-dir', str(workspace))
+            self.assertEqual(status, 0, err)
+            install.assert_called_once_with(Path(__file__).resolve().parents[1], environment)
+        command = next(line.strip() for line in out.splitlines() if line.startswith('  '))
+        self.assertEqual(shlex.split(command), [str(environment / 'bin/agent-level'),
+                                               '--project-dir', str(workspace)])
+        self.assertNotIn('source ', out)
+        self.assertNotIn('  cd ', out)
+        instructions = (workspace / 'AGENTS.md').read_text()
+        self.assertIn(f'`{shlex.quote(str(environment / "bin/agent-level-record"))}`', instructions)
+
+    def test_checkout_launcher_runs_without_package_installation(self):
+        launcher = Path(__file__).resolve().parents[1] / 'agent-level'
+        for args in (['--version'], ['setup', '--help']):
+            result = subprocess.run([sys.executable, '-S', str(launcher), *args],
+                                    cwd=self.root, capture_output=True, text=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('1.0.0' if args == ['--version'] else 'Install Agent Level', result.stdout)
+
+    def test_setup_missing_project_fails_without_configuration(self):
+        status, _, err = self.run_cli('setup', '--project-dir', str(self.root / 'absent'))
+        self.assertEqual(status, 2)
+        self.assertIn('setup failed', err)
+        self.assertFalse((self.root / 'AGENTS.md').exists())
 
     def test_default_generates_branded_html_without_logs(self):
         status, out, err = self.run_cli(*self.empty)

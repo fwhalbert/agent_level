@@ -25,29 +25,27 @@ Agent Level 基于 **Claude Code 和 Codex** 的本地活动与任务证据，
 ## 快速开始
 
 需要 Git 和 Python 3.10+，运行时无第三方依赖。
-在 Linux / macOS 的 bash 或 zsh 中依次执行，
-将 `workspace_dir` 改为要评估的项目的绝对路径：
+在 Linux / macOS 的 bash 或 zsh 中，从源码目录运行一条 setup 命令，
+将项目路径改为要评估的项目的绝对路径：
 
 ```bash
 git clone https://github.com/fwhalbert/agent_level.git
 cd agent_level
-workspace_dir="/absolute/path/to/your-project"
-python3 bootstrap.py --project-dir "$workspace_dir" --venv "$workspace_dir/.venv"
-source "$workspace_dir/.venv/bin/activate"
-cd "$workspace_dir"
-agent-level
+./agent-level setup --project-dir /absolute/path/to/your-project
 ```
 
-安装脚本会安装命令，在 `AGENTS.md`、`CLAUDE.md` 中引用任务记录指令，并配置会话提示 hook。
-在浏览器打开终端输出的 `file://` 链接，默认报告路径为
+Setup 自动创建或复用虚拟环境、安装命令，在 `AGENTS.md`、`CLAUDE.md` 中引用任务记录指令，
+并配置会话提示 hook。完成后会打印可在任意目录直接运行的报告命令，无需激活虚拟环境；
+项目指令中也会写入 recorder 的完整命令路径。已安装工具时，可在项目中运行 `agent-level setup`。
+运行 setup 打印的报告命令，再在浏览器打开输出的 `file://` 链接，默认报告路径为
 `out/agent_level/YYYY-MM-DD/agent-level.html`。
 
 在目标项目开启新的 Claude Code 或 Codex 会话，照常交给它工程任务。
 Agent 按[记录流程](AGENTS.md)登记验收检查并记录结果。
 hook 只显示 “Auto eval enabled.”；Codex 的新 hook 需要先在 `/hooks` 中信任。
-任务完成后，再运行 `agent-level` 更新报告。
+任务完成后，运行 setup 打印的报告命令更新报告。
 
-每个新终端先激活虚拟环境。请保留本工具源码目录，移动目录或更换虚拟环境后重新运行安装脚本。
+请保留本工具源码目录，移动目录或更换虚拟环境后重新运行 setup。
 仅安装分析器及更多选项见[配置指南](docs/SETUP.md)，或运行 `agent-level --help`。
 
 ## L0–L7 框架
@@ -78,4 +76,4 @@ hook 只显示 “Auto eval enabled.”；Codex 的新 hook 需要先在 `/hooks
 - [OpenAI 指南与实现范围](docs/OPENAI.md)
 - [方法、一手来源与限制](docs/REFERENCES.md)
 - [架构](docs/ARCHITECTURE.md)
-- [贡献指南](CONTRIBUTING.md) · [安全报告](SECURITY.md)
+- [贡献指南](CONTRIBUTING.md) · [安全报告](SECURITY.md) · [MIT 许可证](LICENSE)

@@ -10,6 +10,9 @@
 - Add Python 3.10–3.13 CI, installation coverage, contributor/security guidance,
   and citation metadata.
 - Make existing gaps visible with optional evidence-collection experiments in English/中文.
+- Add the MIT license and package license metadata.
+- Add `agent-level setup` for recording instructions and notice hooks, including wheel installs.
+- Provide a checkout CLI for one-command installation and setup; record absolute commands so shell activation is optional.
 - Add architecture and setup guides, and issue/PR templates.
 - Leave all target-project ignore rules under the project's control; bootstrap
   does not create or modify `.gitignore`.
@@ -25,4 +28,4 @@ Existing v1 functionality includes local Claude Code/Codex analysis, L0–L4
 workflow candidates, task acceptance evidence, controlled before/after comparison,
 and offline English/中文 reports. Ruleset `1.0`, assessment thresholds, and protocol
 version `1.1` are unchanged; provenance/review fields are backward-compatible
-additions. This preparation does not create a release or license.
+additions. This preparation does not create a release.
