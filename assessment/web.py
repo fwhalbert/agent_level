@@ -2,11 +2,13 @@
 from html import escape
 import base64
 import json
+import re
 
 from .references import REFERENCES, METHOD_NOTE
 from .anthropic import REASONS
 from .history import HISTORY_NOTE
 from .guidance import EXPERIMENT_NOTE, recommended_experiment
+from .collection import DISCOVERY_NOTE
 from .web_i18n import attributes as language_attributes, pair, text as t
 from .web_usage import CSS as USAGE_CSS, SCRIPT as USAGE_SCRIPT, render_usage
 
@@ -22,7 +24,23 @@ DIAGNOSTICS = {
     'token_counter_resets': 'Cumulative token counter resets', 'invalid_tool_arguments': 'Invalid tool arguments',
     'skipped_symlinks': 'Skipped symlinks', 'invalid_stats_cache': 'Invalid activity cache',
     'invalid_stats_rows': 'Invalid activity cache rows',
+    'invalid_task_records': 'Rejected task records',
+    'unreadable_task_records': 'Unreadable task records',
+    'oversized_task_records': 'Oversized task records',
+    'invalid_task_stores': 'Rejected task record directories',
+    'invalid_nested_tool_records': 'Invalid nested tool records',
+    'duplicate_nested_tool_records': 'Duplicate nested tool records',
 }
+REVIEW_LABELS = {'confirmed': 'Confirmed', 'overturned': 'Overturned', 'inconclusive': 'Inconclusive'}
+FAILURE_LABELS = {'requirements': 'Requirements', 'implementation': 'Implementation',
+                  'environment': 'Environment', 'tests': 'Tests', 'grader': 'Grader',
+                  'collection': 'Evidence collection', 'unknown': 'Unknown'}
+STANDARD_REVIEW_LABELS = {'human': 'Human', 'independent_model': 'Independent model',
+                          'template': 'Template', 'self': 'Agent itself', 'unknown': 'Unknown'}
+SELECTION_LABELS = {'all_failure': 'All failed tasks', 'all_unknown': 'All unknown tasks',
+                    'random_success': 'Random successful tasks', 'targeted': 'Targeted review'}
+INTERVENTION_LABELS = {'clarification': 'Clarification', 'correction': 'Correction',
+                       'environment': 'Environment', 'approval': 'Approval', 'other': 'Other'}
 CSS = """
 :root{color-scheme:light;--ink:#202124;--muted:#62666d;--line:#e2e4e7;--green:#087c68;--amber:#936000;--red:#b3332b;--accent:#2459a9}
 *{box-sizing:border-box}
@@ -49,6 +67,7 @@ select{color:var(--ink);background:white;padding:7px 10px;border:1px solid #bfc3
 .ladder{display:grid;grid-template-columns:repeat(8,minmax(0,1fr));margin:20px 0 0;gap:8px}.rung{border:0;border-top:3px solid var(--line);background:transparent;text-align:left;padding:10px 8px;font-size:12px;color:var(--muted);overflow-wrap:anywhere}.rung b{font-size:18px;display:block;color:var(--ink);margin-bottom:4px}.rung.achieved{border-color:var(--green);color:var(--green)}.rung.achieved b{color:var(--green)}.rung.current{background:#e7f6f0;box-shadow:inset 0 0 0 1px #81c9b2}.rung[aria-expanded=true]{outline:2px solid var(--line);outline-offset:2px}.rung-state{display:block;font-size:11px;margin-top:8px}.rung-state:after{content:' ▾'}.rung[aria-expanded=true] .rung-state:after{content:' ▴'}
 .level-branch{margin:20px 0 0;padding:16px 20px;border-left:2px solid var(--line);background:#fafbfa}.level-branch h3{margin:0 0 8px}.level-branch .check{position:relative;margin-left:8px;padding-left:18px;border-left:1px solid var(--line)}.level-branch .check:before{content:'';position:absolute;left:0;top:20px;width:12px;border-top:1px solid var(--line)}
 .metric-grid.engineering{grid-template-columns:repeat(5,minmax(0,1fr))}.metric.coverage .value{font-size:26px}.coverage details{font-size:12px;margin-top:8px;padding-top:8px}.coverage summary{font-size:12px}.coverage .method{font-size:12px}
+.task-diagnostic-table{min-width:920px}.task-diagnostic-table td{vertical-align:top}.task-diagnostic-table td:first-child{white-space:nowrap}
 .table-scroll{overflow-x:auto}table{width:100%;border-collapse:collapse;font-size:13px;font-variant-numeric:tabular-nums}th{text-align:left;color:var(--muted);font-size:12px;font-weight:500}td,th{padding:12px 10px;border-bottom:1px solid var(--line)}td:last-child{text-align:right}.evidence-table td:last-child{text-align:left}.eval-outcomes{min-width:660px}.eval-outcomes td{white-space:nowrap;font-size:20px;font-weight:600}
 .status{font-size:12px;color:var(--muted)}.status.ok{color:var(--green);font-weight:600}.comparison-status{font-size:20px;font-weight:650}.comparison-result{font-size:24px;font-weight:650;line-height:1.5;font-variant-numeric:tabular-nums}
 .callout{border-left:3px solid #abb2bc;padding:10px 14px;font-size:13px;margin:16px 0;color:var(--muted);background:#f7f8fa}.callout.warn{border-color:var(--amber);background:#fcf8ef;color:#795117}
@@ -175,12 +194,15 @@ def _panel(name, report):
          '<div class="hero-right"><strong>' + t('Next · L{level} {title}', level=next_level, title=pair(LEVELS[next_level])) + '</strong>',
          '<p class="muted">' + t('{sessions} sessions · {days} active days', sessions=f'{scope["sessions"]:,}', days=scope['active_days']) + '</p></div></div>']
     visibility = report.get('level_visibility', {})
+    if any(key in scope['diagnostics'] for key in
+           ('invalid_task_records', 'unreadable_task_records', 'oversized_task_records', 'invalid_task_stores')):
+        p.append('<div class="callout warn">' + t(DISCOVERY_NOTE) + '</div>')
     if visibility.get('may_undercount_edits_and_verification'):
         p.append('<div class="callout warn">' + t('Code orchestration calls {count} have no visible nested tool trace. This level reflects visible logs only and may undercount edits and verification. See task outcome assessment for Codex acceptance results.', count=visibility['opaque_orchestrator_calls']) + '</div>')
     p.extend(['<div class="metric-grid engineering">',
               _metric('Human inputs', _number(o['humanish_user']), 'Excludes system and subagent input'),
               _metric('Tool calls', _number(o['tool_calls']), '{ratio} calls / human input', ratio=f"{o['tool_per_human']:.2f}"),
-              _metric('Edit → verify sessions', _number(o['engineering_sessions']), 'Edit then build / test in the same session'),
+              _metric('Edit → verify sessions', _number(o['engineering_sessions']), 'Any edit followed by build / test; later edits may remain unverified'),
               _metric('Verification attempt share', f"{o['verification_ratio']:.1%}", 'build + test / shell calls'),
               '<div class="metric coverage"><div class="label">' + t('Data coverage and quality') + '</div>',
               f'<div class="value">{scope["files_with_data"]:,} / {scope["files_scanned"]:,}</div>',
@@ -190,7 +212,7 @@ def _panel(name, report):
         for key, value in scope['diagnostics'].items():
             p.append(f'<p class="method">{t(DIAGNOSTICS.get(key, key))}: {value}</p>')
         p.append('</details>')
-    p.append('</div></div>' + _gap_panel(report) + render_usage(name, report) + '<div class="card level-explorer"><h2>' + t('Level requirements and gaps') + '</h2><div class="ladder">')
+    p.append('</div></div>' + _verification_panel(report) + _gap_panel(report) + render_usage(name, report) + '<div class="card level-explorer"><h2>' + t('Level requirements and gaps') + '</h2><div class="ladder">')
     for i, title in enumerate(LEVELS):
         achieved = report["levels"][f"L{i}"]["status"] in ("DEFAULT", "OBSERVED")
         cls = (' achieved' if achieved else '') + (' current' if level == i else '')
@@ -213,6 +235,46 @@ def _panel(name, report):
     p.append(_improvement_panel(report))
     p.append('</section>')
     return ''.join(p)
+
+
+def _verification_panel(report):
+    coverage = report.get('verification_coverage')
+    visibility = report.get('tool_observability')
+    if not coverage and not visibility:
+        return ''
+    parts = ['<div class="card verification-coverage"><h2>' + t('Verification after the final observed edit') + '</h2>']
+    if coverage:
+        edited = coverage['edited_sessions']
+        parts.extend(['<div class="metric-grid secondary">',
+                      _metric('Sessions with observed edits', _number(edited), 'Denominator includes visible edit activity only'),
+                      _metric('Final edit verification coverage', _percent(coverage.get('final_edit_verification_coverage')),
+                              '{verified} / {edited} edited sessions attempted build / test',
+                              verified=coverage['final_edit_verified_sessions'], edited=edited),
+                      _metric('Final edit successful verification', _percent(coverage.get('final_edit_success_coverage')),
+                              '{passed} / {edited} edited sessions returned success',
+                              passed=coverage['final_edit_verification_passed_sessions'], edited=edited),
+                      _metric('Final edits without verification', coverage['final_edit_without_verification_sessions'],
+                              'No recognized build / test after the last observed edit'), '</div>',
+                      '<p class="method">' + t('Latest recognized verification after the final edit: success {passed} / failure {failed} / unknown {unknown}',
+                              passed=coverage['final_edit_verification_passed_sessions'],
+                              failed=coverage['final_edit_verification_failed_sessions'],
+                              unknown=coverage['final_edit_verification_unknown_sessions']) + '</p>',
+                      '<p class="method">' + t('A later edit invalidates earlier verification coverage. A successful tool return does not prove requirement coverage or task acceptance.') + '</p>'])
+    if visibility:
+        expanded, calls = visibility['expanded_orchestrator_calls'], visibility['orchestrator_calls']
+        parts.extend(['<h3>' + t('Tool observability') + '</h3>',
+                      '<p>' + t('Recognized tools: {recognized} · Structured nested calls: {nested} · Orchestration calls expanded: {expanded} / {calls}',
+                              recognized=visibility['recognized_tool_calls'], nested=visibility['structured_nested_tool_calls'],
+                              expanded=expanded, calls=calls) + '</p>',
+                      '<p class="method">' + t('Public log tool calls: {public} · Opaque orchestration calls: {opaque}',
+                              public=visibility['public_jsonl_tool_calls'], opaque=visibility['opaque_orchestrator_calls']) + '</p>'])
+        if 'unparsed_records' in visibility or 'missing_timestamp_records' in visibility:
+            parts.append('<p class="method">' + t('Unparsed records: {unparsed} · Records with missing timestamps: {undated}',
+                         unparsed=visibility.get('unparsed_records', 0), undated=visibility.get('missing_timestamp_records', 0)) + '</p>')
+        if visibility.get('may_undercount_edits_and_verification'):
+            parts.append('<div class="callout warn">' + t('Coverage is limited to visible tools. Incomplete logs or unexpanded orchestration can hide edits and tests; zero recognized calls does not prove no work occurred.') + '</div>')
+    parts.append('</div>')
+    return ''.join(parts)
 
 
 def _gap_panel(report):
@@ -282,7 +344,8 @@ def _anthropic_panel(report):
             p.append('<p class="muted">' + t('No results for this mode yet.') + '</p>')
         for g in rows:
             o = g['outcomes']
-            p.append('<h3>' + e(g['label']) + ' · ' + t(LABELS[g['source']]) + '</h3>')
+            p.append('<h3>' + (t('Evaluation group · {group}', group=_public_ref(g['group_id']))
+                             if g.get('group_id') else e(g['label'])) + ' · ' + t(LABELS[g['source']]) + '</h3>')
             p.append('<p class="method">' + t('Tasks {tasks} · Complete tasks {complete} · Success {success} / failure {failure} / unknown {unknown} / unrun {unrun}', tasks=g['tasks'], complete=g['complete_tasks'], success=o['success'], failure=o['failure'], unknown=o['unknown'], unrun=o['not_run']) + '</p>')
             headers = ['Grading coverage', 'Graded pass rate', 'Planned success bounds']
             if mode == 'daily':
@@ -298,6 +361,8 @@ def _anthropic_panel(report):
             elapsed = pair('{total} sec / {records} records', total=f"{duration['total']:.1f}", records=duration['recorded']) if duration['recorded'] else pair('Not recorded')
             interventions = pair('{total} times / {records} records', total=f"{human['total']:g}", records=human['recorded']) if human['recorded'] else pair('Not recorded')
             p.append('<p class="method">' + t('Locally verified evidence: {runs} runs · Duration: {duration} · Human interventions: {human}', runs=o['verified'], duration=elapsed, human=interventions) + '</p>')
+            if 'missing' in human:
+                p.append('<p class="method">' + t('Human intervention records missing: {count}. Missing counts are unknown, not zero.', count=human['missing']) + '</p>')
         if mode == 'daily':
             p.append('<p class="method">' + t('Daily tasks have one acceptance run and require neither environment reset nor a reference solution. Repeat reliability is not calculated. Wilson intervals require complete groups and an approximately independent, identically distributed sample.') + '</p>')
         else:
@@ -309,6 +374,7 @@ def _anthropic_panel(report):
         for reason, n in r['failure_reasons'].items():
             p.append('<p>' + t(REASONS.get(reason, reason)) + ': ' + str(n) + '</p>')
         p.append('</div>')
+    p.append(_review_panel(r))
     p.append('<div class="card" style="margin-top:18px"><h2>' + t('Method requirements and evidence coverage') + '</h2><div class="table-scroll"><table class="evidence-table"><thead><tr>' + ''.join('<th>' + t(label) + '</th>' for label in ('Evaluation step', 'Recorded / Expected', 'Required evidence')) + '</tr></thead><tbody>')
     for row in r['readiness']:
         coverage = f"{row['present']} / {row['total']}" if row['total'] else t('Not applicable / Not supplied')
@@ -334,6 +400,83 @@ def _anthropic_panel(report):
     p.extend('<li>' + t(note) + '</li>' for note in r['limitations'])
     p.append('</ul><a href="' + e(r['reference_url']) + '">' + t('Read Anthropic’s published evaluation method ↗') + '</a></details></div>')
     return ''.join(p)
+
+
+def _public_ref(value):
+    return value if isinstance(value, str) and re.fullmatch(r'(group|task|trial)-[0-9a-f]{16}', value) else '—'
+
+
+def _review_panel(report):
+    standard = report.get('acceptance_standard_coverage')
+    review = report.get('review_summary')
+    tasks = report.get('task_diagnostics', [])
+    counts = report['counts']
+    if not standard and not review and not tasks:
+        return ''
+    parts = ['<div class="card acceptance-review"><h2>' + t('Acceptance definitions, review, and provenance') + '</h2>']
+    if standard:
+        total = standard['tasks']
+        parts.extend(['<p>' + t('Frozen acceptance definitions: {frozen} / {tasks} · Human or independent model review recorded: {reviewed} / {tasks}',
+                              frozen=standard.get('frozen', 0), tasks=total, reviewed=standard.get('reviewed', 0)) + '</p>',
+                      '<p class="method">' + t('Definition metadata: version {versions} / {tasks} · author {authors} / {tasks}',
+                              versions=standard.get('version_recorded', 0), authors=standard.get('author_recorded', 0), tasks=total) + '</p>'])
+    if 'session_linked_trials' in counts:
+        parts.append('<p>' + t('Acceptance trials linked to sessions: {linked} / {trials} · Unlinked: {unlinked}',
+                              linked=counts['session_linked_trials'], trials=counts['trials'],
+                              unlinked=counts['session_unlinked_trials']) + '</p>')
+    if review:
+        headers = ('Outcome', 'Human reviewed / Recorded (trials)', 'Suggested review count (tasks)')
+        parts.append('<div class="table-scroll"><table><thead><tr>' +
+                     ''.join('<th scope="col">' + t(label) + '</th>' for label in headers) + '</tr></thead><tbody>')
+        for status, label, suggestion in (('failure', 'Failure', 'suggested_failure_review'),
+                                          ('unknown', 'Unknown', 'suggested_unknown_review'),
+                                          ('success', 'Success', 'suggested_success_sample')):
+            parts.append('<tr><th scope="row">' + t(label) + '</th><td>' +
+                         f"{review.get('reviewed_' + status + '_trials', 0)} / {review.get(status + '_trials', 0)}" +
+                         '</td><td>' + str(review.get(suggestion, 0)) + '</td></tr>')
+        parts.append('</tbody></table></div><p class="method">' +
+                     t('Suggested scope is all failed and unknown tasks plus a random 20% of successful tasks within each evaluation group, rounded up. Suggestions and selection metadata do not prove human review occurred.') + '</p>')
+        selections = review.get('reviewed_selection_counts', {})
+        if selections:
+            parts.append('<p class="method">' + t('Selection methods of recorded human reviews') + ': ' +
+                         ' · '.join(t(label) + ': ' + e(selections[key]) for key, label in SELECTION_LABELS.items() if selections.get(key)) + '</p>')
+        categories = review.get('failure_categories', {})
+        if categories:
+            parts.append('<p class="method">' + t('Human review failure categories') + ': ' +
+                         ' · '.join(t(label) + ': ' + e(categories[key]) for key, label in FAILURE_LABELS.items() if categories.get(key)) + '</p>')
+    parts.append('<p class="method">' + t('Session links and frozen definitions provide traceability. Recorded independent review remains a declaration; local verification does not establish an independent audit.') + '</p></div>')
+    if tasks:
+        parts.append('<details class="card task-diagnostics"><summary>' + t('Task diagnostics · Stable diagnostic references') + '</summary>')
+        for task in tasks:
+            parts.append('<h3>' + e(_public_ref(task.get('task_ref'))) + ' · ' + e(_public_ref(task.get('group_id'))) + '</h3>')
+            standard = task.get('acceptance_standard', {})
+            parts.append('<p class="method">' + t('Acceptance frozen: {frozen} · Review source: {source} · Reviewer recorded: {reviewed}',
+                         frozen=pair('Yes' if standard.get('frozen') else 'No'),
+                         source=pair(STANDARD_REVIEW_LABELS.get(standard.get('review_source'), 'Unknown')),
+                         reviewed=pair('Yes' if standard.get('reviewed') else 'No')) + '</p>')
+            headers = ('Trial reference', 'Outcome', 'Reason', 'Session link', 'Human review', 'Human interventions')
+            parts.append('<div class="table-scroll"><table class="task-diagnostic-table"><thead><tr>' +
+                         ''.join('<th scope="col">' + t(label) + '</th>' for label in headers) + '</tr></thead><tbody>')
+            for trial in task.get('trials', []):
+                status = {'success': 'Success', 'failure': 'Failure', 'unknown': 'Unknown', 'not_run': 'Unrun / Not supplied'}.get(trial.get('status'), 'Unknown')
+                reason = REASONS.get(trial.get('reason'), 'No trial record for planned run' if trial.get('status') == 'not_run' else 'Unknown')
+                human = trial.get('human_review', {})
+                if human.get('recorded'):
+                    review_text = t(REVIEW_LABELS.get(human.get('result'), 'Unknown')) + ' · ' + t(FAILURE_LABELS.get(human.get('failure_category'), 'Unknown'))
+                else:
+                    review_text = t('Not recorded')
+                interventions = trial.get('human_interventions', {})
+                intervention_text = e(interventions['total']) if interventions.get('recorded') else t('Not recorded')
+                types = interventions.get('types', {})
+                if types:
+                    intervention_text += '<br>' + ' · '.join(t(label) + ': ' + e(types[key]) for key, label in INTERVENTION_LABELS.items() if key in types)
+                parts.append('<tr><td>' + e(_public_ref(trial.get('trial_ref'))) + '</td><td>' + t(status) +
+                             '</td><td>' + (t(reason) if trial.get('reason') else '—') + '</td><td>' +
+                             t('Linked' if trial.get('session_linked') else 'Not recorded') + '</td><td>' + review_text +
+                             '</td><td>' + intervention_text + '</td></tr>')
+            parts.append('</tbody></table></div>')
+        parts.append('</details>')
+    return ''.join(parts)
 
 
 def _improvement_panel(report):

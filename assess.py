@@ -38,7 +38,7 @@ from pathlib import Path
 
 from assessment.logs import (
     Metrics, scan, scan_codex, merge_metrics, parse_date, BASH_CATEGORY_ORDER,
-    HUMAN_FILTER_RULES, usage_breakdown,
+    HUMAN_FILTER_RULES, usage_breakdown, verification_coverage, observability,
 )
 
 from assessment.anthropic import assess as assess_anthropic, filter_evals, load_evals, render_summary
@@ -46,6 +46,7 @@ from assessment.improvement import assess as assess_improvement, render_summary 
 from assessment.references import REFERENCES, METHOD_NOTE
 from assessment.evidence import EvidenceReader
 from assessment.guidance import EXPERIMENT_NOTE, recommended_experiment
+from assessment.collection import DISCOVERY_NOTE
 
 VERSION = "1.0.0"
 RULESET_VERSION = "1.0"
@@ -221,6 +222,44 @@ def render_report(report, markdown=False):
                        ('Edit calls', 'edit_calls'), ('Edit → verify sessions', 'engineering_sessions'),
                        ('Engineering days', 'engineering_days'), ('Tool / human', 'tool_per_human')]:
         lines.append(f"- {label}: {observed[key]}")
+    coverage = report.get('verification_coverage', {})
+    if coverage:
+        lines.extend(['', heading('Final edit verification coverage'),
+                      f"Edited sessions: {coverage['edited_sessions']}; verification after final observed edit: "
+                      f"{coverage['final_edit_verified_sessions']} ({num(coverage['final_edit_verification_coverage'], '{:.1%}')})",
+                      f"Latest verification results: passed {coverage['final_edit_verification_passed_sessions']} / "
+                      f"failed {coverage['final_edit_verification_failed_sessions']} / "
+                      f"unknown {coverage['final_edit_verification_unknown_sessions']}",
+                      f"No verification after final edit: {coverage['final_edit_without_verification_sessions']}; "
+                      f"unknown event order: {coverage['final_edit_order_unknown_sessions']}",
+                      coverage['note']])
+        for category, counts in coverage['categories'].items():
+            lines.append(f"- {category}: attempts {counts['attempts']} / passed {counts['passed']} / "
+                         f"failed {counts['failed']} / unknown {counts['unknown']}")
+    visibility = report.get('tool_observability', {})
+    if visibility:
+        lines.extend(['', heading('Tool observability'),
+                      f"Recognized tool calls: {visibility['recognized_tool_calls']}; "
+                      f"structured nested calls: {visibility['structured_nested_tool_calls']}; "
+                      f"public JSONL calls: {visibility['public_jsonl_tool_calls']}",
+                      f"Orchestration: expanded {visibility['expanded_orchestrator_calls']} / "
+                      f"opaque {visibility['opaque_orchestrator_calls']}; "
+                      f"expansion coverage {num(visibility['orchestrator_expansion_ratio'], '{:.1%}')}",
+                      f"Unparsed records: {visibility.get('unparsed_records', 0)}; "
+                      f"missing timestamp records: {visibility.get('missing_timestamp_records', 0)}",
+                      visibility['note']])
+    usage = report.get('model_usage', {})
+    if usage.get('roles'):
+        lines.extend(['', heading('Token usage by role')])
+        for row in usage['roles']:
+            lines.append(f"- {row['source']} / {row['role']}: total {row['total_tokens']}; "
+                         f"uncached input {row['uncached_input_tokens']}; cache read {row['cache_read']}; "
+                         f"cache write {row['cache_creation']}; output {row['output_tokens']}; "
+                         f"reasoning subset {row['reasoning_output_tokens']} "
+                         f"({row['reasoning_records']} usage records report reasoning)")
+        lines.append('Token totals are input plus output, including cached input. Reasoning is an output subset. '
+                     'Roles follow recorded metadata; unknown roles remain unknown. These counts are not monetary costs '
+                     'and are not divided by unrelated task outcomes.')
     lines.extend(['', heading('Level gates')])
     for key, gate in report['levels'].items():
         title = LEVEL_SHORT.get(int(key[1:])) or f'{key} {LEVEL_NAMES[int(key[1:])]}'
@@ -241,6 +280,9 @@ def render_report(report, markdown=False):
                   '', render_summary(anthropic, markdown=markdown),
                   '', render_improvement(report['self_improvement_evaluation'], markdown=markdown),
                   '', heading('Limitations')])
+    if any(key in scope['diagnostics'] for key in
+           ('invalid_task_records', 'unreadable_task_records', 'oversized_task_records', 'invalid_task_stores')):
+        lines.append(DISCOVERY_NOTE)
     lines.extend('- ' + note for note in report['limitations'])
     return '\n'.join(lines)
 
@@ -318,6 +360,8 @@ def build_report(m: Metrics, res: dict, since, until,
             "verification_ratio": round(m.verification_ratio, 4),
         },
         "model_usage": usage_breakdown(m),
+        "verification_coverage": verification_coverage(m),
+        "tool_observability": observability(m),
         "stats_cache": {
             "source": "claude",
             "available": m.stats_available,
@@ -436,6 +480,8 @@ def main(argv=None, *, default_method='levels') -> int:
         return 2
     if discovery['enabled']:
         show_progress(f"Found {discovery['files']} project task records covering {discovery['tasks']} tasks")
+        if discovery.get('diagnostics'):
+            print('[warn] ' + DISCOVERY_NOTE, file=sys.stderr)
     sources = ("claude", "codex") if args.source == "all" else (args.source,)
     collected = {}
     for source in sources:
@@ -462,6 +508,7 @@ def main(argv=None, *, default_method='levels') -> int:
     task_filters = {'model': args.model, 'reasoning_effort': args.reasoning_effort}
     for name, metrics in selected.items():
         show_progress(f"Calculating {name} assessment…")
+        metrics.diagnostics.update(discovery.get('diagnostics', {}))
         result = evaluate(metrics)
         result['anthropic_evaluation'] = assess_anthropic(metrics, eval_data, since, until, args.eval_k, evidence_reader)
         result['self_improvement_evaluation'] = assess_improvement(

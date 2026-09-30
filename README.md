@@ -12,10 +12,11 @@ to show how engineering work is shared between humans and agents.
 - **Assess your workflow:** see an L0–L7 candidate level, supporting evidence, and gaps.
 - **Track task results:** summarize acceptance outcomes from registered checks.
 - **Compare improvements:** compare workflow changes on the same frozen tasks.
-- **Explore usage:** view daily tokens, model shares, and cache usage.
+- **Explore usage:** view daily tokens, model and role shares, and cache usage.
+- **Check verification coverage:** distinguish final-edit verification from older workflow signals and visible trace gaps.
 
 Reports support English/中文 offline HTML, text, Markdown, and JSON.
-They contain aggregates, not raw conversations or source code.
+They contain aggregates and opaque diagnostic references, not raw conversations or source code.
 
 **Local analysis · No source code upload · Evidence-based · English / 中文 reports**
 
@@ -77,6 +78,7 @@ ability or model intelligence. It is not an industry standard.
 
 - [Setup and task recording](docs/SETUP.md)
 - [Task evaluation and JSON protocol](docs/ANTHROPIC.md)
+- [Workflow metrics, frozen standards and human review](docs/WORKFLOW_METRICS.md)
 - [Before/after improvement evaluation](docs/IMPROVEMENT_EVALUATION.md)
 - [OpenAI guidance and implementation scope](docs/OPENAI.md)
 - [Methods, primary sources, and limitations](docs/REFERENCES.md)

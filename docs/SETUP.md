@@ -37,7 +37,8 @@ agent-level-assess
 
 Bootstrap installs the package, adds an absolute reference to this checkout's
 `AGENTS.md` in the workspace's `AGENTS.md` and `CLAUDE.md`, configures session notice
-hooks, and ignores `out/agent_level/`. It preserves existing instructions. Without
+hooks, and preserves existing instructions. It does not create, read or modify
+the target project's `.gitignore`; the project manages its own ignore rules. Without
 `--venv`, it selects an existing workspace `venv`, otherwise `.venv`.
 
 Keep the tool checkout available. Rerun bootstrap after moving it or changing the
@@ -47,7 +48,10 @@ The notice hook only displays “Auto eval enabled.”; new Codex project hooks 
 review and trust in `/hooks` before running. Installation alone does not enable
 automatic recording.
 
-Keep `.codex/agent-eval/` and `.claude/agent-eval/` local and ignored by Git.
+Keep `.codex/agent_level/` and `.claude/agent_level/` local and ignored by Git.
+The recorder and analyzer use only `agent_level/tasks/`. For existing records,
+manually rename the data directory to `agent_level` when the destination is absent,
+preserving the evidence files. Use the updated task path with `record finish`.
 Captured acceptance output may contain sensitive information. Run the analyzer
 again after tasks finish to include the new evidence.
 

@@ -43,7 +43,7 @@ agent-level-assess --project-dir /path/to/workspace -o reports/workspace-history
 agent-level-assess --project-dir /path/to/workspace/repos/example-project --days 30
 ```
 
-Project matching uses log `cwd` in the selected directory and descendants. It excludes similarly named siblings and diagnoses records with no working directory; it does not guess from transcript text. Codex updates the directory at `turn_context`; Claude uses the recorded directory and carries it forward within a file. Project mode skips the global Claude stats cache. It finds `.codex/agent-eval/tasks/*/results.json` and `.claude/agent-eval/tasks/*/results.json` in the project or ancestors, filters by task `repo`, and checks local evidence. `--no-auto-evals` keeps only log analysis. `--eval-results` cannot be combined with project mode, preventing accidental import of another project's task data.
+Project matching uses log `cwd` in the selected directory and descendants. It excludes similarly named siblings and diagnoses records with no working directory; it does not guess from transcript text. Codex updates the directory at `turn_context`; Claude uses the recorded directory and carries it forward within a file. Project mode skips the global Claude stats cache. It finds `.codex/agent_level/tasks/*/results.json` and `.claude/agent_level/tasks/*/results.json` in the project or ancestors, filters by task `repo`, and checks local evidence. `--no-auto-evals` keeps only log analysis. `--eval-results` cannot be combined with project mode, preventing accidental import of another project's task data.
 
 HTML includes “Historical activity · Completion signals”; JSON uses `anthropic_evaluation.historical_activity`:
 
@@ -81,6 +81,8 @@ Protocol 1.0 and tasks without a mode are interpreted as `controlled`, retaining
 | `reasoning_effort` | Actual effort, such as `xhigh` or `high`; daily recorder writes `unknown` if omitted. Legacy records without this field use a documented official model default when known, otherwise `unknown`. An explicit `unknown` is retained. |
 | `task_id` | Nonempty ID unique within source, mode, and evaluation conditions |
 | `acceptance_criteria` | Success criteria defined before execution |
+| `acceptance_standard` | Optional `{version, author, review_source, reviewer, review_ref}` provenance; unavailable values remain `unknown` |
+| `acceptance_registration` | Optional `{evidence_ref, evidence_sha256}` frozen registration; new daily records include it |
 | `reference_solution_ref` | Required in controlled mode; optional in daily mode |
 | `required_graders` | Nonempty, duplicate-free array of required grader IDs |
 | `planned_trials` | Positive integer fixed before execution; exactly 1 for daily mode |
@@ -100,6 +102,49 @@ Protocol 1.0 and tasks without a mode are interpreted as `controlled`, retaining
 | `outcome` | `{"passed": true/false, "evidence_ref": "...", "evidence_sha256": "..."}` |
 | `duration_seconds`, `human_interventions` | Optional finite nonnegative numbers; missing is not zero |
 | `review_ref` | Optional human review of the execution trace |
+| `human_reviews` | Optional typed, hash-linked retrospective review array; never changes the acceptance verdict |
+| `session_ids` | Optional explicit associated log session IDs; not guessed or displayed in aggregate reports |
+| `failure_reason` | Optional fixed reason code for failed or incomplete execution |
+
+### Frozen standards and retrospective human review
+
+New daily registrations freeze their scoring-relevant definition in
+`registration.json`. Finish rejects changed criteria, commands, timeouts,
+provenance and evaluation conditions before executing acceptance. Local checking
+also verifies this link. Genuine older records without registration remain
+compatible; their freeze and provenance coverage are unknown. This consistency
+check does not establish requirement coverage or prevent coordinated rewriting of
+all local files. It does not bind results to source revisions.
+
+`agent-level record review --task-dir TASK_DIRECTORY --review-file review.json`
+appends human-supplied review after the trial has finished. For example:
+
+```json
+{
+  "type": "human",
+  "reviewer": "actual reviewer identity",
+  "reviewed_at": "2026-09-30T12:00:00+08:00",
+  "result": "confirmed",
+  "selection": "random_success",
+  "failure_category": "unknown",
+  "human_interventions": 1,
+  "interventions": [{"type": "clarification", "count": 1, "minutes": 2}]
+}
+```
+
+Results are `confirmed`, `overturned` or `inconclusive`; selection is
+`all_failure`, `all_unknown`, `random_success` or `targeted`. Failure categories
+are `requirements`, `implementation`, `environment`, `tests`, `grader`,
+`collection` or `unknown`. Intervention types are `clarification`, `correction`,
+`environment`, `approval` or `other`; counts are nonnegative integers and optional
+minutes are finite nonnegative numbers. Typed counts must sum to the declared
+total. An absent count is unknown. These are declarations by the review author;
+hashes do not prove that a person performed the review. Keep all reviews; the
+latest review describes the current retrospective assessment without replacing
+the registered acceptance outcome.
+
+See [workflow metrics and review](WORKFLOW_METRICS.md) for registration flags,
+visibility limits and explicit local task-reference lookup.
 
 Each grader has `grader_id`, `type` (code/model/human), boolean `passed`, and nonempty `evidence_ref`. Model graders also need `human_calibration_ref`. Locally checked code evidence needs `version` and `evidence_sha256`. Every required grader must agree with the outcome for a valid graded result; partial credit is not supported.
 
@@ -149,4 +194,10 @@ Daily mode has one acceptance run per task. Complete groups include acceptance r
 
 ## Privacy
 
-Task identity, text, and references are used only in memory. Aggregate reports omit task IDs, raw traces, commands, grader content, and imported model/harness names. Groups receive anonymous numbers. JSON aggregate usage fields retain model names from logs.
+Aggregate reports omit raw task/session IDs, record paths, raw traces, commands,
+criteria, grader content, and imported model/harness names. Evaluation groups use
+stable opaque `group_id` values; task diagnostics use opaque `task_ref` and
+`trial_ref` values with fixed reason labels. These are pseudonymous references,
+not an anonymity guarantee. Explicit `record locate` resolves a task reference
+to its local record directory. JSON aggregate usage fields retain model names
+from logs.

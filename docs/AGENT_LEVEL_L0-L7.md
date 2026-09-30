@@ -46,8 +46,8 @@ Selected session logs, project task records and explicitly imported task evidenc
 <claude-dir>/stats-cache.json
 <codex-dir>/sessions/**/*.jsonl
 <codex-dir>/archived_sessions/**/*.jsonl
-<project>/.codex/agent-eval/tasks/*/results.json
-<project>/.claude/agent-eval/tasks/*/results.json
+<project>/.codex/agent_level/tasks/*/results.json
+<project>/.claude/agent_level/tasks/*/results.json
 <explicit task results and locally checked evidence>
 ```
 
@@ -75,7 +75,7 @@ Shell categories are search/read/build/test/git/python/node/docker/ssh/pr/ci/oth
 
 ## 6. Project isolation and combined reports
 
-Installed assessment commands and `python3 assess.py` default to the current project. Existing target-project logs remain available; cloning this tool does not reset them. The checkout contains no personal task results, logs, reports or enabled hooks; the checked-in example reports use explicitly synthetic data. Bootstrap adds the generated report directory to `.gitignore`. Task-record discovery searches the project and ancestors but filters records by task repository. Global stats-cache is excluded in project mode. Keep task evidence local and exclude its directories from version control.
+Installed assessment commands and `python3 assess.py` default to the current project. Existing target-project logs remain available; cloning this tool does not reset them. The checkout contains no personal task results, logs, reports or enabled hooks; the checked-in example reports use explicitly synthetic data. Bootstrap does not create or modify the target project's `.gitignore`; all ignore rules are managed by the target project. Task-record discovery searches the project and ancestors but filters records by task repository. Invalid automatic records are isolated and reported as diagnostics; attributable rejected trials remain unknown. Unreadable or unassigned records cannot be included in task denominators. Global stats-cache is excluded in project mode. Keep task evidence local and exclude its directories from version control.
 
 Combined log statistics add counts, recalculate ratios and union dates. They never join edits and verification across sources.
 

@@ -24,8 +24,8 @@ commands. Reports aggregate activity and omit raw prompts, commands and source.
 User-supplied labels and dates may still identify a project or person.
 
 The task recorder executes the explicitly registered acceptance command and saves
-its output locally. Treat that output and `.codex/agent-eval/` or
-`.claude/agent-eval/` as private. Local evidence verification checks consistency,
+its output locally. Treat that output and `.codex/agent_level/` or
+`.claude/agent_level/` as private. Local evidence verification checks consistency,
 not a tamper-proof audit against a writer with access to the workspace.
 
 Maintainers: [enable private reporting](https://docs.github.com/en/code-security/how-tos/report-and-fix-vulnerabilities/configure-vulnerability-reporting/configure-for-a-repository)

@@ -4,6 +4,7 @@ This is a local implementation of Anthropic's published methodology, not an
 official Anthropic scoring standard or an evaluation execution harness.
 """
 import json
+import hashlib
 import math
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -11,6 +12,7 @@ from pathlib import Path
 
 from .history import render_history
 from .references import ANTHROPIC_URL, METHOD_NOTE
+from .evidence import valid_human_review
 
 IDENTITY = ('source', 'suite_id', 'suite_version', 'model', 'harness_version', 'task_id')
 # Defaults for legacy records that omitted effort. Keep this list narrow: unknown
@@ -43,6 +45,10 @@ REASONS = {
     'execution_incomplete': 'Execution incomplete / interrupted', 'conflicting_record': 'Conflicting record',
     'conflicting_task': 'Conflicting task definition', 'evidence_verification_failed': 'Local evidence verification failed',
     'invalid_record': 'Invalid trial record', 'outside_window': 'Trial outside selected period',
+    'timeout': 'Acceptance timeout', 'interruption': 'Acceptance interrupted',
+    'launch_failure': 'Acceptance command could not start', 'output_limit': 'Acceptance output limit exceeded',
+    'verification_unavailable': 'Verification unavailable', 'evidence_missing': 'Evidence missing',
+    'acceptance_registration_invalid': 'Frozen acceptance definition invalid',
 }
 
 
@@ -59,6 +65,52 @@ def task_effort(task):
     if not _text(model):
         return 'unknown'
     return OFFICIAL_DEFAULT_EFFORT.get((task.get('source'), model.strip().lower()), 'unknown')
+
+
+def _identity(task):
+    return ((task.get('evaluation_mode', 'controlled'),)
+            + tuple(task.get(field) for field in IDENTITY[:-1])
+            + (task_effort(task), task.get('task_id')))
+
+
+def _opaque(prefix, identity):
+    raw = json.dumps(identity, ensure_ascii=False, separators=(',', ':')).encode('utf-8')
+    return prefix + '-' + hashlib.sha256(raw).hexdigest()[:16]
+
+
+def task_reference(task):
+    """Stable public identity, without exposing imported names or local paths."""
+    return _opaque('task', _identity(task))
+
+
+def _standard_summary(task, frozen):
+    standard = task.get('acceptance_standard')
+    standard = standard if isinstance(standard, dict) else {}
+    known = lambda field: _text(standard.get(field)) and standard[field].strip().lower() != 'unknown'
+    source = standard.get('review_source')
+    source = source if source in ('human', 'independent_model', 'template', 'self', 'unknown') else 'unknown'
+    return dict(recorded=bool(standard), frozen=frozen,
+                version_recorded=known('version'), author_recorded=known('author'),
+                review_source=source,
+                reviewed=source in ('human', 'independent_model') and known('reviewer'),
+                review_reference_recorded=known('review_ref'))
+
+
+def _review_summary(trial, evidence_reader, diagnostics):
+    reviews = trial.get('human_reviews', [])
+    if not isinstance(reviews, list):
+        diagnostics['invalid_human_reviews'] += 1
+        return None
+    valid = []
+    for review in reviews:
+        ok = valid_human_review(review) and _text(review.get('evidence_ref'))
+        if ok and evidence_reader is not None:
+            ok = evidence_reader.verify_human_review(trial, review)
+        if ok:
+            valid.append(review)
+        else:
+            diagnostics['invalid_human_reviews'] += 1
+    return max(valid, key=lambda item: _timestamp(item['reviewed_at'])) if valid else None
 
 
 def filter_evals(data, model=None, effort=None):
@@ -166,6 +218,8 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
     if type(k) is not int or k < 1:
         raise ValueError('eval k must be a positive integer')
     counts, diagnostics, checks, reasons = Counter(), Counter(), Counter(), Counter()
+    review_counts, standard_counts = Counter(), Counter()
+    task_diagnostics = []
     groups = defaultdict(list)
     records, conflicting = {}, set()
     for task in data['tasks'] if data else []:
@@ -178,9 +232,7 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
                 or task.get('evaluation_mode', 'controlled') not in ('daily', 'controlled')):
             diagnostics['invalid_tasks'] += 1
             continue
-        key = ((task.get('evaluation_mode', 'controlled'),)
-               + tuple(task[field] for field in IDENTITY[:-1])
-               + (task_effort(task), task['task_id']))
+        key = _identity(task)
         if key in records:
             if records[key] == task:
                 diagnostics['duplicate_tasks'] += 1
@@ -224,6 +276,15 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
         if outside == len(unique) and unique and not invalid and expected == len(unique):
             continue
         ready = _task_ready(task)
+        registration_ok, registration_reason = True, None
+        if evidence_reader is not None and hasattr(evidence_reader, 'verify_registration'):
+            registration_ok, registration_reason = evidence_reader.verify_registration(task)
+        standard = _standard_summary(task, bool(task.get('acceptance_registration')) and registration_ok
+                                     and evidence_reader is not None)
+        standard_counts.update({name: int(standard[name]) for name in
+                               ('recorded', 'frozen', 'version_recorded', 'author_recorded', 'reviewed')})
+        task_diag = dict(task_ref=task_reference(task), group_id=_opaque('group', key[:-1]),
+                         acceptance_standard=standard, trials=[])
         counts['tasks'] += 1
         counts['defined_tasks'] += int(ready)
         counts['expected_trials'] += expected
@@ -249,12 +310,23 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
             else:
                 diagnostics['invalid_timestamps'] += 1
             flags, passed = _trial_evidence(task, trial)
+            human_review = _review_summary(trial, evidence_reader, diagnostics)
+            flags['audit'] = flags['audit'] or human_review is not None
             checks.update({name: int(value) for name, value in flags.items()})
             reason = None
             if key in conflicting or tid in conflict_ids:
                 passed, reason = None, 'conflicting_record'
+            elif not registration_ok:
+                passed, reason = None, registration_reason or 'acceptance_registration_invalid'
             elif trial.get('status') in ('running', 'grading', 'interrupted', 'error'):
-                passed, reason = None, 'execution_incomplete'
+                code = trial.get('failure_reason')
+                if code in REASONS and code != 'acceptance_failed':
+                    reason = code
+                elif evidence_reader is not None and hasattr(evidence_reader, 'diagnose_incomplete'):
+                    reason = evidence_reader.diagnose_incomplete(trial)
+                else:
+                    reason = 'execution_incomplete'
+                passed = None
             elif passed is None:
                 reason = 'missing_or_inconsistent_evidence'
             if passed is not None and evidence_reader is not None:
@@ -271,8 +343,34 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
                 outcomes.append(passed)
                 if not passed:
                     reasons['acceptance_failed'] += 1
+            status = 'unknown' if passed is None else 'success' if passed else 'failure'
+            review_counts[status + '_trials'] += 1
+            if human_review is not None:
+                review_counts['reviewed_' + status + '_trials'] += 1
+                review_counts['reviewed_selection_' + human_review['selection']] += 1
+                review_counts['category_' + human_review.get('failure_category', 'unknown')] += 1
+            session_ids = trial.get('session_ids')
+            linked = isinstance(session_ids, list) and bool(session_ids) and all(_text(item) for item in session_ids)
+            counts['session_linked_trials'] += int(linked)
+            counts['session_unlinked_trials'] += int(not linked)
+            intervention_count = human_review.get('human_interventions') if human_review else trial.get('human_interventions')
+            intervention_recorded = (type(intervention_count) in (int, float)
+                                     and math.isfinite(intervention_count) and intervention_count >= 0)
+            trial_diag = dict(trial_ref=_opaque('trial', key + (tid,)), status=status,
+                              reason=reason if passed is None else 'acceptance_failed' if passed is False else None,
+                              session_linked=linked,
+                              human_review=dict(recorded=human_review is not None,
+                                                result=human_review['result'] if human_review else None,
+                                                failure_category=human_review.get('failure_category', 'unknown') if human_review else None,
+                                                selection=human_review['selection'] if human_review else None),
+                              human_interventions=dict(recorded=intervention_recorded,
+                                                       total=intervention_count if intervention_recorded else None,
+                                                       types={kind: sum(item['count'] for item in human_review.get('interventions', []) if item['type'] == kind)
+                                                              for kind in {item['type'] for item in human_review.get('interventions', [])}}
+                                                       if human_review else {}))
+            task_diag['trials'].append(trial_diag)
             for field, dest in (('duration_seconds', durations), ('human_interventions', interventions)):
-                value = trial.get(field)
+                value = intervention_count if field == 'human_interventions' else trial.get(field)
                 if type(value) in (int, float) and math.isfinite(value) and value >= 0:
                     dest.append(value)
         if key in conflicting:
@@ -284,6 +382,13 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
         row = {'expected': expected, 'success': success, 'failure': graded - success,
                'unknown': unknown, 'not_run': not_run, 'complete': complete,
                'graded': graded, 'verified': verified, 'durations': durations, 'interventions': interventions}
+        if not_run:
+            task_diag['trials'].append(dict(trial_ref=None, status='not_run', reason='not_run', count=not_run))
+        if invalid + outside:
+            task_diag['trials'].append(dict(trial_ref=None, status='unknown', reason='invalid_record' if invalid else 'outside_window',
+                                           count=invalid + outside))
+        task_diag['task_status'] = ('failure' if graded > success else 'unknown' if not complete else 'success')
+        task_diagnostics.append(task_diag)
         groups[key[:-1]].append(row)
         counts.update(graded_trials=graded, successful_trials=success, failed_trials=graded-success,
                       unknown_trials=unknown, not_run_trials=not_run, verified_trials=verified,
@@ -291,7 +396,7 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
                       repeated_tasks=int(complete and mode == 'controlled' and graded >= k))
 
     group_reports = []
-    for index, (key, tasks) in enumerate(sorted(groups.items()), 1):
+    for key, tasks in sorted(groups.items()):
         mode = key[0]
         complete = [t for t in tasks if t['complete']]
         repeated = [t for t in complete if t['graded'] >= k] if mode == 'controlled' else []
@@ -305,7 +410,8 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
         durations = [v for t in tasks for v in t['durations']]
         interventions = [v for t in tasks for v in t['interventions']]
         group_reports.append({
-            'label': f'Evaluation group {index}', 'source': key[1], 'evaluation_mode': mode, 'tasks': len(tasks),
+            'label': 'Evaluation ' + _opaque('group', key), 'group_id': _opaque('group', key),
+            'source': key[1], 'evaluation_mode': mode, 'tasks': len(tasks),
             'complete_tasks': len(complete), 'repeated_tasks': len(repeated), 'outcomes': sums,
             'coverage': sums['graded'] / sums['expected'],
             'observed_success_rate': sums['success'] / sums['graded'] if sums['graded'] else None,
@@ -316,11 +422,13 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
             'pass_at_k': sum(r[0] for r in estimates) / len(estimates) if estimates else None,
             'pass_power_k': sum(r[1] for r in estimates) / len(estimates) if estimates else None,
             'duration_seconds': {'recorded': len(durations), 'total': sum(durations)},
-            'human_interventions': {'recorded': len(interventions), 'total': sum(interventions)},
+            'human_interventions': {'recorded': len(interventions), 'missing': sums['expected'] - len(interventions),
+                                    'total': sum(interventions) if interventions else None},
         })
     count_keys = ('tasks', 'defined_tasks', 'trials', 'expected_trials', 'graded_trials', 'successful_trials',
                   'failed_trials', 'unknown_trials', 'not_run_trials', 'verified_trials', 'outside_window_trials',
-                  'complete_tasks', 'repeated_tasks', 'collector_journal_trials', 'session_export_trials')
+                  'complete_tasks', 'repeated_tasks', 'collector_journal_trials', 'session_export_trials',
+                  'session_linked_trials', 'session_unlinked_trials')
     state = ('imported_results' if counts['tasks'] and counts['tasks'] == counts['complete_tasks'] and not diagnostics['invalid_tasks']
              else 'partial_evidence' if counts['graded_trials'] else 'insufficient_evidence')
     readiness = []
@@ -335,6 +443,8 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
         readiness.append({'id': name, 'label': label, 'requirement': need,
                           'present': have, 'total': total,
                           'status': 'recorded' if total and have == total else 'partial' if have else 'missing'})
+    review_task_counts = Counter(item['task_status'] for item in task_diagnostics)
+    success_sample_groups = Counter(item['group_id'] for item in task_diagnostics if item['task_status'] == 'success')
     return {
         'method': 'anthropic_evals', 'method_version': '1.1', 'reference_url': ANTHROPIC_URL,
         'status': state, 'status_label': {'imported_results': 'Task results available · Check evidence coverage',
@@ -344,6 +454,18 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
         'evidence_basis': 'local_checked' if evidence_reader is not None else 'imported' if data is not None else 'logs_only',
         'k': k, 'counts': {name: counts[name] for name in count_keys},
         'groups': group_reports, 'readiness': readiness,
+        'task_diagnostics': task_diagnostics,
+        'acceptance_standard_coverage': dict(standard_counts, tasks=counts['tasks']),
+        'review_summary': dict({name: review_counts[name] for name in
+                               ('reviewed_success_trials', 'reviewed_failure_trials', 'reviewed_unknown_trials')},
+                              success_trials=counts['successful_trials'], failure_trials=counts['failed_trials'],
+                              unknown_trials=counts['unknown_trials'], task_counts=dict(review_task_counts),
+                              reviewed_selection_counts={name.removeprefix('reviewed_selection_'): value
+                                                         for name, value in review_counts.items() if name.startswith('reviewed_selection_')},
+                              failure_categories={name.removeprefix('category_'): value for name, value in review_counts.items() if name.startswith('category_')},
+                              suggested_success_sample=sum(math.ceil(n * .2) for n in success_sample_groups.values()),
+                              suggested_failure_review=review_task_counts['failure'],
+                              suggested_unknown_review=review_task_counts['unknown']),
         'diagnostics': {key: value for key, value in diagnostics.items() if value},
         'failure_reasons': {key: value for key, value in reasons.items() if value},
         'trial_window': {'since': min(dates) if dates else None, 'until': max(dates) if dates else None},
@@ -361,6 +483,8 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
             'Complete daily groups include a 95% Wilson interval, assuming independent outcomes sampled from a common success probability. It does not remove task selection bias.',
             'Out-of-window trials count as unknown in the planned denominator and are listed separately. Date filters do not remove unrun plans.',
             'Log counts, self-reported settings, and reference links are not success evidence. Historical logs cannot create independent repeat trials retroactively.',
+            'Human reviews and interventions are declared metadata. A reviewed result never replaces the recorded acceptance verdict; missing intervention counts are unknown. Review selection labels do not prove random sampling.',
+            'Frozen acceptance registration detects local changes to scoring definitions. It does not prove requirement coverage, independent approval, or source revision identity. Legacy registrations have no freeze claim.',
         ],
     }
 
@@ -376,6 +500,17 @@ def render_summary(report, markdown=False):
     lines.append(f"Success {c['successful_trials']} / failure {c['failed_trials']} / unknown {c['unknown_trials']} / unrun {c['not_run_trials']}; Local evidence verification {c['verified_trials']} runs")
     if c.get('collector_journal_trials') or c.get('session_export_trials'):
         lines.append(f"Trace coverage: collector journal {c.get('collector_journal_trials', 0)} runs; session export {c.get('session_export_trials', 0)} runs. An event journal is not a full session transcript.")
+    standards = report.get('acceptance_standard_coverage', {})
+    lines.append(f"Acceptance standards: frozen {standards.get('frozen', 0)}/{c['tasks']}; version recorded {standards.get('version_recorded', 0)}; author recorded {standards.get('author_recorded', 0)}; declared human/independent model review {standards.get('reviewed', 0)}.")
+    lines.append(f"Trial/session links: recorded {c.get('session_linked_trials', 0)}; missing {c.get('session_unlinked_trials', 0)}. Links are provenance, not full-session trace coverage.")
+    reviews = report.get('review_summary', {})
+    lines.append('Declared human review: ' + '; '.join(
+        f"{status} {reviews.get('reviewed_' + status + '_trials', 0)}/{reviews.get(status + '_trials', 0)}"
+        for status in ('success', 'failure', 'unknown')))
+    lines.append(f"Review recommendation: all failure/unknown tasks plus a seeded 20% of successful tasks in each stable group; run agent-level-record review-plan for exact selection. Selection is separate from completed review.")
+    if reviews.get('failure_categories'):
+        lines.append('Reviewed cause categories: ' + '; '.join(
+            f'{name}: {count}' for name, count in sorted(reviews['failure_categories'].items())))
     for group in report['groups']:
         fmt = lambda value: 'Insufficient evidence' if value is None else f'{value:.1%}'
         if group['evaluation_mode'] == 'daily':
@@ -386,10 +521,34 @@ def render_summary(report, markdown=False):
         lines.append(f"Grading coverage={fmt(group['coverage'])}; Graded pass rate={fmt(group['observed_success_rate'])}; Planned success bounds={fmt(group['success_bounds'][0])} .. {fmt(group['success_bounds'][1])}")
         if group['evaluation_mode'] == 'daily':
             lines.append(f"Daily acceptance pass rate={fmt(group['daily_success_rate'])}; 95% Wilson interval={group['daily_wilson_95']}")
+        interventions = group['human_interventions']
+        total = interventions['total'] if interventions['total'] is not None else 'Unknown'
+        lines.append(f"Human interventions: count recorded for {interventions['recorded']} trials; missing {interventions.get('missing', 0)}; total across recorded trials {total}.")
     if report['failure_reasons']:
         lines.append('Failure and missing evidence reasons: ' + '; '.join(
             f"{REASONS.get(reason, reason)}: {count}"
             for reason, count in report['failure_reasons'].items()))
+    details = report.get('task_diagnostics', [])
+    if details:
+        lines.append('Task diagnosis references (resolve locally with agent-level-record locate):')
+    for task in details[:100]:
+        entries = []
+        for trial in task['trials']:
+            entry = (trial.get('trial_ref') or 'planned') + ': ' + trial['status']
+            if trial.get('reason'):
+                entry += ' / ' + REASONS.get(trial['reason'], trial['reason'])
+            review = trial.get('human_review', {})
+            if review.get('recorded'):
+                entry += ' / human review ' + review['result'] + ' / ' + review['failure_category']
+            interventions = trial.get('human_interventions', {})
+            if interventions.get('recorded'):
+                entry += ' / interventions ' + str(interventions['total'])
+                if interventions.get('types'):
+                    entry += ' (' + ', '.join(f'{kind}={count}' for kind, count in sorted(interventions['types'].items())) + ')'
+            entries.append(entry)
+        lines.append('- ' + task['task_ref'] + ' [' + task['group_id'] + ']: ' + '; '.join(entries))
+    if len(details) > 100:
+        lines.append(f"{len(details) - 100} additional task references are available in the JSON report.")
     for row in report['readiness']:
         lines.append(f"- {row['label']}: {row['present']}/{row['total']}; {row['requirement']}")
     for note in report['limitations']:

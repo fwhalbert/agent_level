@@ -196,3 +196,50 @@ class TestUsageReport(TempCase):
         self.assertEqual(html.count('data-usage-period="all" aria-pressed="true"'), 3)
         self.assertIn('id="usage-codex-7" hidden', html)
         self.assertIn("section.querySelector('#' + item.getAttribute('aria-controls')).hidden = !active", html)
+
+    def test_role_totals_and_recent_windows_preserve_source_and_cache_components(self):
+        from assessment.web_usage import role_period_data, render_usage
+        report = self.report()
+        def row(role, n, date=None, source='codex'):
+            result = dict(source=source, role=role, input_tokens=n, cache_read=n // 2,
+                          cache_creation=n // 10, output_tokens=n // 5,
+                          total_tokens=n + n // 5)
+            if date:
+                result['date'] = date
+            return result
+        report['model_usage']['roles'] = [row('executor', 100), row('auto_review', 50),
+                                         row('subagent', 100, source='claude'), row('unknown', 50)]
+        report['model_usage']['daily_roles'] = [
+            row('executor', 100, '2026-09-10'), row('auto_review', 50, '2026-09-17'),
+            row('subagent', 100, '2026-09-17', source='claude'), row('unknown', 50, '2026-09-17')]
+        recent, _, _ = role_period_data(report, 7)
+        self.assertEqual(sum(r['total_tokens'] for r in recent), 240)
+        self.assertEqual({(r['source'], r['role']) for r in recent},
+                         {('codex', 'auto_review'), ('claude', 'subagent'), ('codex', 'unknown')})
+        html = render_usage('combined', report)
+        self.assertIn('Automatic approval review', html)
+        self.assertIn('自动审批审查', html)
+        self.assertIn('Subagent', html)
+        self.assertIn('Unknown role', html)
+        self.assertIn('Uncached input', html)
+        self.assertIn('Cache write', html)
+        self.assertIn('Total / output: 6.0', html)
+        self.assertIn('Uncached input / output: 3.2', html)
+        self.assertIn('no pricing is estimated', html)
+        self.assertIn('Combined usage retains all sources and roles', html)
+        self.assertIn('Automatic approval review does not establish independent task acceptance', html)
+
+    def test_older_reports_do_not_infer_roles_from_model_names(self):
+        from assessment.web_usage import render_usage
+        report = self.report()
+        report['model_usage'].pop('roles', None)
+        report['model_usage'].pop('daily_roles', None)
+        report['model_usage']['models'][0]['model'] = 'codex-auto-review'
+        html = render_usage('codex', report)
+        table = html.split('class="usage-role-table"', 1)[1].split('</table>', 1)[0]
+        self.assertIn('Unknown role', table)
+        self.assertNotIn('Automatic approval review', table)
+        report['model_usage']['models'][0]['output_tokens'] = 0
+        html = render_usage('codex', report)
+        self.assertIn('Total / output: —', html)
+        self.assertNotIn('nan', html.lower())

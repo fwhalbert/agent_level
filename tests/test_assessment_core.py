@@ -97,6 +97,18 @@ class TestCodex(TempCase):
         report = A.build_report(m, A.evaluate(m), None, None)
         self.assertEqual(report['level_visibility']['status'], 'direct')
 
+    def test_venv_python_verification_counts_for_both_sources(self):
+        command = '/repo/.venv/bin/python -m unittest discover -s tests'
+        self.codex([call('apply_patch', 'patch', custom=True),
+                    call('exec_command', {'cmd': command}, cid='verify')])
+        self.write('projects/a.jsonl', [assistant(tools=[('Edit', {'file_path': 'a.py'})]),
+                                       assistant(tools=[('Bash', {'command': command})])])
+        for metrics in (L.scan_codex(self.root), L.scan(self.root)):
+            with self.subTest(source=metrics.source):
+                self.assertEqual(metrics.verification_calls, 1)
+                self.assertEqual(len(metrics.engineering_sessions), 1)
+                self.assertEqual(metrics.history.summary()['verification_calls'], 1)
+
     def test_unrelated_sessions_do_not_form_workflow(self):
         self.codex([call('apply_patch', 'patch', custom=True)], name='edit')
         self.codex([call('exec_command', {'cmd': 'pytest'}, cid='test')], name='verify')
@@ -159,6 +171,165 @@ class TestCodex(TempCase):
             'may_undercount_edits_and_verification': True})
         html = render_html({'reports': {'codex': report}, 'ruleset_version': '1.0', 'merge_note': 'test'})
         self.assertIn('This level reflects visible logs only', html)
+
+
+class TestVerificationCoverage(TempCase):
+    def output(self, cid, code=0):
+        return record('response_item', {'type': 'function_call_output',
+                                       'call_id': cid, 'output': {'exit_code': code}})
+
+    def test_final_edit_invalidates_earlier_success_but_retains_level_signal(self):
+        self.codex([call('apply_patch', 'patch', 'edit-one', custom=True),
+                    call('exec_command', {'cmd': 'pytest'}, 'verify'), self.output('verify'),
+                    call('apply_patch', 'patch', 'edit-two', custom=True)])
+        m = L.scan_codex(self.root)
+        coverage = L.verification_coverage(m)
+        self.assertEqual((coverage['edited_sessions'], coverage['any_edit_then_verify_sessions']), (1, 1))
+        self.assertEqual(coverage['final_edit_verified_sessions'], 0)
+        self.assertEqual(coverage['final_edit_without_verification_sessions'], 1)
+        self.assertEqual(coverage['final_edit_success_coverage'], 0)
+
+    def test_latest_verification_return_sets_final_status(self):
+        for name, code in (('passed', 0), ('failed', 1), ('unknown', None)):
+            rows = [call('apply_patch', 'patch', 'edit', custom=True),
+                    call('exec_command', {'cmd': 'pytest'}, 'first'), self.output('first'),
+                    call('exec_command', {'cmd': 'make'}, 'latest')]
+            if code is not None:
+                rows.append(self.output('latest', code))
+            self.codex(rows, name=name)
+        coverage = L.verification_coverage(L.scan_codex(self.root))
+        self.assertEqual(coverage['edited_sessions'], 3)
+        self.assertEqual(coverage['final_edit_verified_sessions'], 3)
+        for name in ('passed', 'failed', 'unknown'):
+            self.assertEqual(coverage[f'final_edit_verification_{name}_sessions'], 1)
+        self.assertEqual(coverage['categories']['build'], {'attempts': 3, 'passed': 1, 'failed': 1, 'unknown': 1})
+        self.assertEqual(coverage['verification_attempts'], 6)
+        self.assertEqual(coverage['verification_passed'], 4)
+
+    def test_missing_timestamps_cannot_prove_final_order(self):
+        self.codex([call('apply_patch', 'patch', 'edit', custom=True, ts=None),
+                    call('exec_command', {'cmd': 'pytest'}, 'test'), self.output('test')])
+        coverage = L.verification_coverage(L.scan_codex(self.root))
+        self.assertEqual(coverage['final_edit_verified_sessions'], 0)
+        self.assertEqual(coverage['final_edit_verification_unknown_sessions'], 1)
+        self.assertEqual(coverage['final_edit_order_unknown_sessions'], 1)
+
+    def test_unedited_sessions_do_not_enter_denominator_and_merge_keeps_scopes(self):
+        self.codex([call('exec_command', {'cmd': 'pytest'})])
+        empty = L.verification_coverage(L.scan_codex(self.root))
+        self.assertEqual(empty['edited_sessions'], 0)
+        self.assertIsNone(empty['final_edit_verification_coverage'])
+        self.write('projects/a.jsonl', [assistant(tools=[('Edit', {})])])
+        combined = L.verification_coverage(L.merge_metrics([L.scan(self.root), L.scan_codex(self.root)]))
+        self.assertEqual(combined['edited_sessions'], 1)
+        self.assertEqual(combined['final_edit_verified_sessions'], 0)
+
+    def test_call_ids_are_scoped_to_sessions(self):
+        self.codex([call('exec_command', {'cmd': 'pytest'}), self.output('call-1')], name='one')
+        self.codex([call('exec_command', {'cmd': 'pytest'}), self.output('call-1', 1)], name='two')
+        summary = L.scan_codex(self.root).history.summary()
+        self.assertEqual((summary['verification_calls'], summary['verification_passed'], summary['verification_failed']), (2, 1, 1))
+
+
+class TestStructuredCodexLogs(TempCase):
+    def test_explicit_complete_nested_trace_can_expose_edit_and_verify(self):
+        output = {'nested_tool_calls_complete': True, 'nested_tool_calls': [
+            {'type': 'custom_tool_call', 'call_id': 'edit', 'name': 'apply_patch', 'input': 'PRIVATE_PATCH',
+             'timestamp': '2026-09-10T10:00:00Z'},
+            {'call_id': 'verify', 'name': 'exec_command', 'arguments': {'cmd': 'pytest PRIVATE_ARGUMENT'},
+             'timestamp': '2026-09-10T10:01:00Z', 'output': {'exit_code': 0}}]}
+        rows = [call('exec', 'PRIVATE_DYNAMIC_JS', custom=True),
+                record('response_item', {'type': 'custom_tool_call_output', 'call_id': 'call-1', 'output': output})]
+        self.codex(rows)
+        self.codex(rows, archive=True)
+        metrics = L.scan_codex(self.root)
+        visibility = L.observability(metrics)
+        self.assertEqual(metrics.tool_calls, 3)
+        self.assertEqual(visibility['structured_nested_tool_calls'], 2)
+        self.assertEqual(visibility['opaque_orchestrator_calls'], 0)
+        self.assertEqual(visibility['orchestrator_expansion_ratio'], 1)
+        self.assertEqual(L.verification_coverage(metrics)['final_edit_verification_passed_sessions'], 1)
+        self.assertNotIn('PRIVATE_', json.dumps([visibility, L.verification_coverage(metrics), L.usage_breakdown(metrics)]))
+
+    def test_partial_nested_trace_keeps_orchestrator_opaque(self):
+        self.codex([call('exec', 'PRIVATE_JS', custom=True), record('response_item', {
+            'type': 'custom_tool_call_output', 'call_id': 'call-1', 'output': {'nested_tool_calls': [
+                {'call_id': 'test', 'name': 'exec_command', 'arguments': {'cmd': 'pytest'},
+                 'timestamp': '2026-09-10T10:00:00Z', 'output': {'exit_code': 0}}]}})])
+        visibility = L.observability(L.scan_codex(self.root))
+        self.assertEqual(visibility['status'], 'partial')
+        self.assertEqual(visibility['structured_nested_tool_calls'], 1)
+        self.assertEqual(visibility['opaque_orchestrator_calls'], 1)
+
+    def test_typed_begin_end_fallback_and_canonical_mirrors_are_deduplicated(self):
+        self.codex([call('exec', 'PRIVATE_JS', custom=True),
+                    record('event_msg', {'type': 'exec_command_begin', 'call_id': 'inner',
+                                         'parent_call_id': 'call-1', 'command': ['pytest', '-q']}),
+                    record('event_msg', {'type': 'exec_command_end', 'call_id': 'inner', 'exit_code': 1}),
+                    call('exec_command', {'cmd': 'make'}, 'direct'),
+                    record('event_msg', {'type': 'exec_command_begin', 'call_id': 'direct', 'command': ['make']}),
+                    record('response_item', {'type': 'function_call_output', 'call_id': 'direct', 'output': {'exit_code': 0}})])
+        metrics = L.scan_codex(self.root)
+        summary = metrics.history.summary()
+        self.assertEqual(metrics.tool_calls, 3)
+        self.assertEqual((summary['verification_calls'], summary['verification_passed'], summary['verification_failed']), (2, 1, 1))
+        self.assertEqual(metrics.diagnostics['structured_nested_tool_calls'], 1)
+
+    def test_public_jsonl_started_completed_calls_results_and_usage(self):
+        self.write('sessions/public.jsonl', [
+            {'type': 'thread.started', 'thread_id': 'public'},
+            {'type': 'item.completed', 'item': {'id': 'edit', 'type': 'file_change', 'changes': [{'path': 'PRIVATE_PATH', 'kind': 'update'}]}},
+            {'type': 'item.started', 'item': {'id': 'command', 'type': 'command_execution', 'command': 'pytest'}},
+            {'type': 'item.completed', 'item': {'id': 'command', 'type': 'command_execution', 'command': 'pytest', 'exit_code': 0}},
+            {'type': 'item.completed', 'item': {'id': 'reply', 'type': 'agent_message', 'text': 'PRIVATE_TEXT'}},
+            {'type': 'turn.completed', 'usage': {'input_tokens': 100, 'cached_input_tokens': 40, 'output_tokens': 10}}])
+        metrics = L.scan_codex(self.root)
+        self.assertEqual((metrics.tool_calls, metrics.edit_calls, metrics.assistant), (2, 1, 1))
+        self.assertEqual(metrics.history.summary()['verification_passed'], 1)
+        self.assertEqual((metrics.input_tokens, metrics.cache_read, metrics.output_tokens), (100, 40, 10))
+        self.assertEqual(L.verification_coverage(metrics)['final_edit_order_unknown_sessions'], 1)
+        self.assertEqual(L.observability(metrics)['public_jsonl_tool_calls'], 2)
+
+    def test_role_costs_use_metadata_and_preserve_unknown(self):
+        for name, source, thread_source, model in (
+                ('executor', 'cli', None, 'codex-auto-review'),
+                ('auto_review', 'cli', 'guardian_review', 'GPT-6'),
+                ('subagent', {'subagent': {'other': 'worker'}}, None, 'GPT-6'),
+                ('unknown', None, None, 'GPT-6')):
+            self.write(f'sessions/{name}.jsonl', [
+                record('session_meta', {'id': name, 'source': source, 'thread_source': thread_source}),
+                record('turn_context', {'model': model}), tokens(100, 40, 10)])
+        metrics = L.scan_codex(self.root)
+        usage = L.usage_breakdown(metrics)
+        self.assertEqual({row['role'] for row in usage['roles']}, {'executor', 'auto_review', 'subagent', 'unknown'})
+        self.assertEqual(sum(row['total_tokens'] for row in usage['roles']), metrics.input_tokens + metrics.output_tokens)
+        self.assertTrue(all(row['uncached_input_tokens'] == 60 for row in usage['roles']))
+        merged = L.usage_breakdown(L.merge_metrics([metrics, L.Metrics('claude')]))
+        self.assertEqual(merged['roles'], usage['roles'])
+        self.assertEqual(len(merged['daily_roles']), 4)
+
+    def test_public_repeated_turns_and_archive_replays_keep_usage_and_final_end(self):
+        rows = [{'type': 'thread.started', 'thread_id': 'public'}]
+        for index in range(2):
+            rows.extend([
+                {'type': 'item.completed', 'item': {'id': f'reply-{index}', 'type': 'agent_message', 'text': 'same reply'}},
+                {'type': 'turn.completed', 'usage': {'input_tokens': 100, 'cached_input_tokens': 40, 'output_tokens': 10}}])
+        self.write('sessions/public.jsonl', rows)
+        self.write('archived_sessions/public.jsonl', rows)
+        metrics = L.scan_codex(self.root)
+        self.assertEqual(metrics.assistant, 2)
+        self.assertEqual(metrics.input_tokens, 200)
+        self.assertEqual(metrics.history.summary()['ended_sessions'], 1)
+
+    def test_public_missing_timestamps_are_disclosed_when_date_filter_excludes_records(self):
+        self.write('sessions/public.jsonl', [
+            {'type': 'thread.started', 'thread_id': 'public'},
+            {'type': 'item.completed', 'item': {'id': 'command', 'type': 'command_execution', 'command': 'pytest', 'exit_code': 0}}])
+        metrics = L.scan_codex(self.root, since=L.parse_date('2026-09-01'))
+        self.assertEqual(metrics.tool_calls, 0)
+        visibility = L.observability(metrics)
+        self.assertEqual(visibility['status'], 'partial')
+        self.assertEqual(visibility['missing_timestamp_records'], 1)
 
 
 class TestRulesAndMerge(TempCase):

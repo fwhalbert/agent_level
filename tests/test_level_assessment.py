@@ -103,6 +103,26 @@ class TestBashClassifier(unittest.TestCase):
         self.assertEqual(classify_bash("cd /repo && pytest"), "test")
         self.assertEqual(classify_bash("FOO=1 BAR=2 node a.js"), "node")
 
+    def test_known_executable_paths_preserve_categories(self):
+        cases = [
+            ('/repo/.venv/bin/python -m unittest discover -s tests', 'test'),
+            ('.venv/bin/python3.12 -m pytest -q', 'test'),
+            ('"/repo with spaces/.venv/bin/python" -m unittest', 'test'),
+            ('/repo/.venv/bin/pytest -q', 'test'),
+            ('/usr/bin/env FOO=1 /repo/.venv/bin/python -m pytest', 'test'),
+            ('PYTHON=/repo/.venv/bin/python git status', 'git'),
+            ('RUNNER=/repo/.venv/bin/pytest echo ready', 'read'),
+            ('/usr/bin/env PYTHON=/repo/.venv/bin/python python3 -m unittest', 'test'),
+            ('/usr/bin/bash -lc "/repo/.venv/bin/pytest -q"', 'test'),
+            ('/repo/.venv/bin/python script.py', 'python'),
+            ('/usr/bin/make -j8', 'build'),
+            ('/repo/bin/custom-tool --label pytest', 'other'),
+            ('./build/bin/vad_test in.bin', 'test'),
+        ]
+        for command, category in cases:
+            with self.subTest(command=command):
+                self.assertEqual(classify_bash(command), category)
+
     def test_heredoc_body_ignored(self):
         # Heredoc bodies are data, not build commands.
         self.assertEqual(

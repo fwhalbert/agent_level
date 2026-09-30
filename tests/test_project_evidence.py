@@ -1,6 +1,7 @@
 """Read-only project discovery and evidence checks, independent of task execution."""
 import hashlib
 import json
+from unittest.mock import patch
 
 from assessment.anthropic import assess
 from assessment.collection import load_project_evals
@@ -17,9 +18,8 @@ class TestProjectEvidence(TempCase):
         self.repo = self.workspace / 'src' / 'repo'
         self.repo.mkdir(parents=True)
 
-    def record(self, name='one', repo=None, passed=True, source='codex',
-               model=None, effort=None):
-        directory = self.workspace / f'.{source}' / 'agent-eval' / 'tasks' / name
+    def record(self, name='one', repo=None, passed=True, source='codex', model=None, effort=None):
+        directory = self.workspace / f'.{source}/agent_level/tasks' / name
         directory.mkdir(parents=True)
 
         def artifact(filename, value):
@@ -143,18 +143,80 @@ class TestProjectEvidence(TempCase):
                 self.assertFalse(valid)
                 self.assertEqual(reason, 'evidence_verification_failed')
 
-    def test_symlink_and_empty_ledgers_are_rejected(self):
+    def test_symlink_and_empty_ledgers_are_isolated(self):
         record = self.record()
+        self.record('good')
         content = record.read_text()
         record.write_text(json.dumps({'schema_version': '1.1', 'collector': 'daily-v1', 'tasks': []}))
-        with self.assertRaises(ValueError):
-            load_project_evals(self.workspace)
+        report, counts = self.assessment()
+        self.assertEqual(counts['diagnostics'], {'invalid_task_records': 1})
+        self.assertEqual(counts['unknown_records'], 1)
+        self.assertEqual(report['counts']['successful_trials'], 1)
         target = self.root / 'copy.json'
         target.write_text(content)
         record.unlink()
         record.symlink_to(target)
-        with self.assertRaises(ValueError):
-            load_project_evals(self.workspace)
+        report, counts = self.assessment()
+        self.assertEqual(counts['diagnostics'], {'invalid_task_records': 1})
+        self.assertEqual(report['counts']['successful_trials'], 1)
+
+    def test_other_projects_obsolete_records_do_not_block_discovery(self):
+        self.record()
+        other = self.workspace / 'other'
+        other.mkdir()
+        record = self.record('other', repo=other)
+        ledger = json.loads(record.read_text())
+        ledger['collector'] = 'obsolete'
+        ledger['schema_version'] = 'obsolete'
+        record.write_text(json.dumps(ledger))
+        report, counts = self.assessment(self.repo)
+        self.assertEqual(counts, {'files': 1, 'tasks': 1})
+        self.assertEqual(report['counts']['verified_trials'], 1)
+
+    def test_rejected_identifiable_records_keep_trials_unknown(self):
+        self.record('good')
+        record = self.record('bad')
+        ledger = json.loads(record.read_text())
+        ledger['collector'] = 'obsolete'
+        record.write_text(json.dumps(ledger))
+        report, counts = self.assessment()
+        self.assertEqual(counts['unknown_records'], 1)
+        self.assertEqual(report['counts']['tasks'], 2)
+        self.assertEqual(report['counts']['successful_trials'], 1)
+        self.assertEqual(report['counts']['unknown_trials'], 1)
+        self.assertIsNone(report['groups'][0]['daily_success_rate'])
+
+    def test_oversized_and_unreadable_records_are_isolated(self):
+        self.record('good')
+        record = self.record('bad')
+        with patch('assessment.collection.MAX_EVIDENCE_BYTES', record.stat().st_size - 1):
+            # Both records have similar sizes; make good deliberately smaller.
+            good = self.workspace / '.codex/agent_level/tasks/good/results.json'
+            good.write_text(json.dumps(json.loads(good.read_text()), separators=(',', ':')))
+            report, counts = self.assessment()
+        self.assertEqual(counts['diagnostics'], {'oversized_task_records': 1})
+        self.assertEqual(report['counts']['successful_trials'], 1)
+        original_read = type(record).read_text
+
+        def readable(path, *args, **kwargs):
+            if path == record:
+                raise PermissionError('PRIVATE_PATH')
+            return original_read(path, *args, **kwargs)
+
+        with patch.object(type(record), 'read_text', readable):
+            report, counts = self.assessment()
+        self.assertEqual(counts['diagnostics'], {'unreadable_task_records': 1})
+        self.assertEqual(report['counts']['successful_trials'], 1)
+        self.assertNotIn('PRIVATE_', str(counts))
+
+    def test_discovered_readers_share_one_bounded_cache(self):
+        self.record('one')
+        self.record('two', passed=False)
+        data, reader, _ = load_project_evals(self.workspace)
+        report = assess(Metrics('codex'), data, evidence_reader=reader)
+        self.assertEqual(report['counts']['verified_trials'], 2)
+        self.assertTrue(all(local.cache is reader.cache for local in reader.readers.values()))
+        self.assertLessEqual(reader.cache.byte_size, reader.cache.max_bytes)
 
     def test_no_auto_evals_bypasses_existing_invalid_ledger(self):
         record = self.record()
@@ -162,11 +224,37 @@ class TestProjectEvidence(TempCase):
         args = ['--project-dir', str(self.workspace), '--source', 'claude',
                 '--claude-dir', str(self.root), '--format', 'json']
         code, _, error = self.cli(args)
-        self.assertEqual(code, 2)
+        self.assertEqual(code, 0, error)
+        self.assertIn('Task record discovery is partial', error)
         self.assertNotRegex(error, r'[\u4e00-\u9fff]')
         code, output, error = self.cli(args + ['--no-auto-evals'])
         self.assertEqual(code, 0, error)
         self.assertFalse(json.loads(output)['project_task_records']['enabled'])
+
+    def test_invalid_record_diagnostics_are_visible_in_all_formats(self):
+        record = self.record('bad')
+        self.record('good')
+        record.write_text('PRIVATE_INVALID_JSON')
+        for fmt in ('json', 'txt', 'md', 'html'):
+            with self.subTest(format=fmt):
+                code, output, error = self.cli([
+                    '--project-dir', str(self.workspace), '--format', fmt,
+                    '--claude-dir', str(self.root / 'missing'),
+                    '--codex-dir', str(self.root / 'missing')])
+                self.assertEqual(code, 0, error)
+                self.assertNotIn('PRIVATE_', output + error)
+                self.assertIn('Task record discovery is partial', error)
+                if fmt == 'json':
+                    bundle = json.loads(output)
+                    self.assertEqual(bundle['project_task_records']['unknown_records'], 1)
+                    for report in bundle['reports'].values():
+                        self.assertEqual(report['scope']['diagnostics']['invalid_task_records'], 1)
+                    self.assertEqual(bundle['reports']['codex']['anthropic_evaluation']
+                                     ['counts']['successful_trials'], 1)
+                else:
+                    self.assertIn('Task record discovery is partial', output)
+                    if fmt == 'html':
+                        self.assertIn('任务记录发现不完整', output)
 
     def test_explicit_evidence_import_and_root_validation(self):
         record = self.record()

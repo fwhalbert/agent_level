@@ -179,10 +179,6 @@ def enable_workspace(workspace, venv, source):
     enable_hook(workspace / ".codex" / "hooks.json", command)
     enable_hook(workspace / ".claude" / "settings.json", command)
     remove_generated_entrypoints(workspace)
-    ignore = workspace / '.gitignore'
-    current = ignore.read_text(encoding='utf-8') if ignore.exists() else ''
-    if '/out/agent_level/' not in current.splitlines():
-        write_text(ignore, current.rstrip() + ('\n' if current else '') + '/out/agent_level/\n')
 
 
 def install_package(source, venv):

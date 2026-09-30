@@ -185,6 +185,34 @@ class TestAnthropic(TempCase):
         self.assertEqual(assess(Metrics('codex'), filter_evals(combined, effort='xhigh'))
                          ['counts']['tasks'], 1)
 
+    def test_stable_group_identity_survives_filtering_and_reordering(self):
+        first = task((True,), source='codex', task_id='first')
+        second = task((False,), source='codex', task_id='second')
+        second['model'] = 'OTHER_PRIVATE_MODEL'
+        third = task((True,), source='codex', task_id='third')
+        third['suite_version'] = '2'
+        full = assess(Metrics('codex'), data(first, second, third))
+        reordered = assess(Metrics('codex'), data(third, first, second))
+        filtered = assess(Metrics('codex'), data(second))
+        refs = lambda report: {item['task_ref']: item['group_id'] for item in report['task_diagnostics']}
+        self.assertEqual(refs(full), refs(reordered))
+        self.assertTrue(set(refs(filtered).items()) <= set(refs(full).items()))
+        self.assertEqual(len({g['group_id'] for g in full['groups']}), 3)
+        self.assertNotIn('PRIVATE_', json.dumps(full))
+
+    def test_unknown_provenance_and_missing_intervention_are_not_zero(self):
+        report = assess(Metrics(), data(task((True,), evaluation_mode='daily')))
+        standards = report['task_diagnostics'][0]['acceptance_standard']
+        self.assertFalse(standards['frozen'])
+        self.assertFalse(standards['reviewed'])
+        self.assertFalse(standards['author_recorded'])
+        interventions = report['groups'][0]['human_interventions']
+        self.assertEqual(interventions, {'recorded': 0, 'missing': 1, 'total': None})
+        self.assertEqual(report['counts']['session_unlinked_trials'], 1)
+        summary = render_summary(report)
+        self.assertIn('total across recorded trials Unknown', summary)
+        self.assertIn(report['task_diagnostics'][0]['task_ref'], summary)
+
     def test_time_window_cannot_turn_partial_task_into_complete_task(self):
         t = task()
         t['trials'][0]['timestamp'] = '2026-09-09T23:59:00Z'

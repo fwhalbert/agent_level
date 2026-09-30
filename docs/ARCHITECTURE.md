@@ -32,11 +32,33 @@ default. Explicit `--project-dir` selects another existing directory. Explicit
 `--eval-results` is a separate import flow and cannot be combined with project
 filtering. Progress goes to stderr; `-o -` leaves stdout suitable for report data.
 
+Automatic discovery isolates rejected records and exposes fixed diagnostics in
+all report formats. Readable records belonging to other projects are excluded
+before format validation. Rejected records with usable task identities stay in
+the task results with unknown outcomes; unreadable or unassigned records cannot
+enter task denominators. Explicit imports still require a valid top-level schema.
+
+The recorder writes `.codex/agent_level/tasks/` or `.claude/agent_level/tasks/`.
+Discovery reads these directories only. Bootstrap does not create or modify
+`.gitignore`; ignore rules belong to the target project. CLI and distribution
+names remain `agent-level`.
+
 The analyzer reads data only; it never executes logged commands or imported
 artifacts. Only `record finish` runs a pre-registered acceptance command. The
 recorder binds command output, grader evidence and artifact identity with hashes,
 and atomically publishes `results.json`. It does not record the full agent session
 or independently establish that criteria cover all requirements.
+
+New registrations also freeze the scoring definition and optional standard
+provenance; retrospective human review is appended separately. Project discovery
+forwards registration/review checks to each record's own evidence root. Stable
+opaque group/task/trial references support diagnosis; only explicit local lookup
+reveals a record directory. No source revision binding is performed.
+
+Evidence output and session exports are hash-checked in 64 KiB chunks. Parsed
+evidence uses an LRU content cache capped at 1 MiB and 256 entries, shared across
+all automatically discovered evidence roots; cache keys include the root.
+Aggregate-only JUnit reports reconcile declared counts at every suite level.
 
 ## Assessment invariants
 
@@ -46,11 +68,16 @@ or independently establish that criteria cover all requirements.
 - L5–L7 remain `NOT VERIFIED`. Acceptance and improvement evidence never promote levels.
 - Combined reports add counts, union dates and recalculate ratios; they do not
   join edit/verify chains across sources.
+- Final-edit coverage is separate from the existing level gates, with visible
+  edited sessions as its denominator and unknown ordering/results retained.
+- Structured nested tool events are read only; opaque orchestration remains an
+  explicit coverage gap. Token roles follow recorded metadata, not model names.
 - Unknown, interrupted, and unrun acceptance outcomes remain explicit.
 - Gap presentation reuses `gaps` and `next_target`. Experiments neither modify
   report evidence nor add a new score or JSON protocol.
 
-Reports exclude raw prompts, source and command content. User-supplied labels and
+Reports exclude raw prompts, source and command content. Diagnostic references
+are pseudonymous and stable across filtering/display order. User-supplied labels and
 aggregate dates can still be sensitive. HTML contains inline CSS/JavaScript and
 an embedded aggregate JSON download; no remote resources are loaded. Source links
 navigate externally only when opened by the reader.

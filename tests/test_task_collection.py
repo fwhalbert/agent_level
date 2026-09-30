@@ -1,9 +1,11 @@
 """Local evidence verification and partial-result statistics."""
 import copy
 import hashlib
+from contextlib import contextmanager
+from unittest.mock import patch
 
 from assessment.anthropic import assess
-from assessment.evidence import EvidenceReader, junit_result
+from assessment.evidence import EvidenceCache, EvidenceReader, MAX_CACHE_ENTRIES, junit_result
 from assessment.logs import Metrics, parse_date
 from tests.test_anthropic_eval import task, data
 from tests.test_assessment_core import TempCase
@@ -82,6 +84,105 @@ class TestEvidence(TempCase):
         with self.assertRaises(ValueError):
             junit_result(b'<testsuite tests="2"><testcase/></testsuite>')
 
+    def test_junit_aggregate_parents_must_agree_with_children(self):
+        for attribute in ('tests="3"', 'failures="1"', 'errors="1"',
+                          'skipped="1"', 'failures="-1"'):
+            report = (f'<testsuites {attribute}><testsuite tests="2" failures="0" '
+                      'errors="0" skipped="0"/></testsuites>').encode()
+            with self.subTest(attribute=attribute), self.assertRaises(ValueError):
+                junit_result(report)
+        nested = (b'<testsuites tests="2"><testsuite tests="2" failures="1">'
+                  b'<testsuite tests="2" failures="0"/></testsuite></testsuites>')
+        with self.assertRaises(ValueError):
+            junit_result(nested)
+
+    def test_junit_consistent_aggregates_and_empty_runs(self):
+        report = (b'<testsuites tests="3" failures="1" skipped="1">'
+                  b'<testsuite tests="3" failures="1" skipped="1">'
+                  b'<testsuite tests="2" failures="1"/>'
+                  b'<testsuite tests="1" skipped="1"/>'
+                  b'</testsuite></testsuites>')
+        self.assertFalse(junit_result(report))
+        self.assertFalse(junit_result(b'<testsuites tests="2" errors="1"/>'))
+        self.assertTrue(junit_result(b'<testsuites tests="2"><testsuite tests="2"/></testsuites>'))
+        self.assertIsNone(junit_result(b'<testsuites tests="2" skipped="2">'
+                                      b'<testsuite tests="2" skipped="2"/></testsuites>'))
+
+    def test_cache_capacity_and_eviction_preserve_hash_checks(self):
+        cache = EvidenceCache(max_bytes=64)
+        reader = EvidenceReader(self.root, cache=cache)
+        digests = {}
+        for name in ('a', 'b', 'c'):
+            raw = name.encode() * 32
+            (self.root / name).write_bytes(raw)
+            digests[name] = hashlib.sha256(raw).hexdigest()
+        reader.read('a', digests['a'])
+        reader.read('b', digests['b'])
+        reader.read('a', digests['a'])  # Keep the most recently used file.
+        reader.read('c', digests['c'])
+        self.assertLessEqual(cache.byte_size, cache.max_bytes)
+        (self.root / 'b').write_bytes(b'x' * 32)
+        with self.assertRaises(ValueError):
+            reader.read('b', digests['b'])
+        raw = b'z' * 65
+        (self.root / 'large').write_bytes(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        self.assertEqual(reader.read('large', digest), raw)
+        (self.root / 'large').write_bytes(b'x' * 65)
+        with self.assertRaises(ValueError):
+            reader.read('large', digest)
+
+    def test_shared_cache_cannot_mask_another_roots_invalid_file(self):
+        other = self.root / 'other'
+        other.mkdir()
+        (self.root / 'same.log').write_bytes(b'good')
+        (other / 'same.log').write_bytes(b'bad')
+        cache = EvidenceCache()
+        digest = hashlib.sha256(b'good').hexdigest()
+        self.assertEqual(EvidenceReader(self.root, cache=cache).read('same.log', digest), b'good')
+        with self.assertRaises(ValueError):
+            EvidenceReader(other, cache=cache).read('same.log', digest)
+
+    def test_empty_files_cannot_create_unbounded_cache_entries(self):
+        reader = EvidenceReader(self.root)
+        digest = hashlib.sha256(b'').hexdigest()
+        for index in range(MAX_CACHE_ENTRIES + 1):
+            name = str(index)
+            (self.root / name).touch()
+            reader.read(name, digest)
+        self.assertLessEqual(len(reader.cache.entries), MAX_CACHE_ENTRIES)
+
+    def test_hash_only_verification_streams_and_retains_no_output(self):
+        reader = EvidenceReader(self.root)
+        raw = b'x' * (2 * 1024 * 1024)
+        path = self.root / 'large.log'
+        path.write_bytes(raw)
+        digest = hashlib.sha256(raw).hexdigest()
+        original_open = reader._open
+        case = self
+
+        class BoundedReads:
+            def __init__(self, stream):
+                self.stream = stream
+
+            def read(self, size):
+                case.assertGreater(size, 0)
+                case.assertLessEqual(size, 65536)
+                return self.stream.read(size)
+
+        @contextmanager
+        def checked_open(reference):
+            with original_open(reference) as stream:
+                yield BoundedReads(stream)
+
+        with patch.object(reader, '_open', checked_open):
+            self.assertTrue(reader.verify_file('large.log', digest))
+        self.assertEqual(reader.cache.byte_size, 0)
+        self.assertFalse(reader.cache.entries)
+        path.write_bytes(b'changed')
+        with self.assertRaises(ValueError):
+            reader.verify_file('large.log', digest)
+
     def test_reader_rejects_escape_symlinks_wrong_hash_and_fifo(self):
         artifact = self.root / 'ok.log';artifact.write_bytes(b'hello')
         digest = hashlib.sha256(b'hello').hexdigest()
@@ -90,11 +191,13 @@ class TestEvidence(TempCase):
         (self.root / 'link').symlink_to(artifact)
         (self.root / 'dirlink').symlink_to(self.root, target_is_directory=True)
         for ref in ('../ok.log', str(artifact), 'https://example.test/file', 'link', 'dirlink/ok.log'):
-            with self.subTest(ref=ref), self.assertRaises((ValueError, OSError)):
-                reader.read(ref, digest)
+            for verify in (reader.read, reader.verify_file):
+                with self.subTest(ref=ref, verify=verify.__name__), self.assertRaises((ValueError, OSError)):
+                    verify(ref, digest)
         with self.assertRaises(ValueError):
             reader.read('ok.log', '0'*64)
         import os
         os.mkfifo(self.root / 'pipe')
-        with self.assertRaises(ValueError):
-            reader.read('pipe', digest)
+        for verify in (reader.read, reader.verify_file):
+            with self.assertRaises(ValueError):
+                verify('pipe', digest)

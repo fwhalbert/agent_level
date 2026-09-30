@@ -2,6 +2,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import subprocess
 import unittest
 from unittest.mock import patch
 
@@ -25,8 +26,7 @@ class TestBootstrap(unittest.TestCase):
         enable_workspace(self.workspace, self.venv, SOURCE)
         self.assertFalse((self.workspace / "agent_level_assess.py").exists())
         self.assertFalse((self.workspace / "assess.py").exists())
-        ignored = (self.workspace / '.gitignore').read_text()
-        self.assertNotIn('agent-eval', ignored)
+        self.assertFalse((self.workspace / '.gitignore').exists())
         first = (self.workspace / "AGENTS.md").read_text()
         first_claude = (self.workspace / "CLAUDE.md").read_text()
         self.assertTrue(enabled(self.workspace))
@@ -43,23 +43,40 @@ class TestBootstrap(unittest.TestCase):
             self.assertIn("agent-level-session-notice",
                           data["hooks"]["SessionStart"][0]["hooks"][0]["command"])
         enable_workspace(self.workspace, self.venv, SOURCE)
+        self.assertFalse((self.workspace / '.gitignore').exists())
         self.assertEqual((self.workspace / "AGENTS.md").read_text(), first)
         self.assertEqual((self.workspace / "CLAUDE.md").read_text(), first_claude)
         for path in (self.workspace / ".codex" / "hooks.json",
                      self.workspace / ".claude" / "settings.json"):
             self.assertEqual(len(json.loads(path.read_text())["hooks"]["SessionStart"]), 1)
 
-    def test_reports_are_ignored_without_erasing_project_patterns(self):
+    def test_existing_gitignore_is_preserved_exactly(self):
         ignore = self.workspace / '.gitignore'
-        ignore.write_text('keep-existing-pattern\n.codex\n.claude\n')
+        original = b'keep-existing-pattern\r\n.codex\r\n.claude\r\n/out/agent_level/\r\n'
+        ignore.write_bytes(original)
         enable_workspace(self.workspace, self.venv, SOURCE)
-        first = ignore.read_text()
-        self.assertNotIn('agent-eval', first)
-        for pattern in ('keep-existing-pattern', '.codex', '.claude',
-                        '/out/agent_level/'):
-            self.assertEqual(first.splitlines().count(pattern), 1)
+        self.assertEqual(ignore.read_bytes(), original)
         enable_workspace(self.workspace, self.venv, SOURCE)
-        self.assertEqual(ignore.read_text(), first)
+        self.assertEqual(ignore.read_bytes(), original)
+
+    def test_bootstrap_does_not_add_git_ignore_rules(self):
+        subprocess.run(['git', 'init', '--quiet', str(self.workspace)], check=True)
+        enable_workspace(self.workspace, self.venv, SOURCE)
+        for agent in ('codex', 'claude'):
+            relative = f'.{agent}/agent_level/tasks/example/check.log'
+            path = self.workspace / relative
+            path.parent.mkdir(parents=True)
+            path.write_text('synthetic acceptance output')
+            result = subprocess.run(['git', '-c', 'core.excludesFile=/dev/null',
+                                     'check-ignore', '--', relative], cwd=self.workspace,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
+        for relative in ('.codex/hooks.json', '.claude/settings.json',
+                         'out/agent_level/example.html'):
+            result = subprocess.run(['git', '-c', 'core.excludesFile=/dev/null',
+                                     'check-ignore', '--', relative], cwd=self.workspace,
+                                    capture_output=True, text=True)
+            self.assertEqual(result.returncode, 1, result.stderr)
 
     def test_existing_instructions_and_settings_are_preserved(self):
         (self.workspace / "AGENTS.md").write_text("Keep this rule.\n")

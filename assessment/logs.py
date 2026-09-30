@@ -46,6 +46,11 @@ BASH_CATEGORY_ORDER = ["search", "read", "build", "test", "git", "python",
 
 _COMPILED_BASH = [(name, prio, re.compile(pat)) for name, prio, pat in BASH_CATEGORIES]
 VERIFICATION_CATEGORIES = {"build", "test"}
+PATH_EXECUTABLES = {
+    'bash', 'sh', 'zsh', 'pytest', 'tox', 'nose2', 'jest', 'vitest', 'mocha', 'ctest',
+    'npm', 'pnpm', 'yarn', 'bun', 'cargo', 'go', 'dotnet', 'mvn', 'gradle', 'swift',
+    'make', 'cmake', 'ninja', 'uv', 'poetry', 'env', 'sudo', 'timeout', 'stdbuf',
+}
 
 
 def _shell_segments(command):
@@ -100,8 +105,10 @@ def _unwrap(tokens):
     tokens = list(tokens)
     while tokens:
         first = tokens[0]
-        if first.startswith("/") and Path(first).name in ("bash", "sh", "zsh"):
-            first = tokens[0] = Path(first).name
+        basename = Path(first).name
+        if ('/' in first and not re.match(r'^[A-Za-z_][\w]*=', first)
+                and (basename in PATH_EXECUTABLES or re.fullmatch(r'python[0-9.]*', basename))):
+            first = tokens[0] = basename
         if re.match(r"^[A-Za-z_][\w]*=", first):
             tokens.pop(0)
         elif first in ("sudo", "time", "nohup", "exec", "command", "env", "!", "{"):
@@ -247,6 +254,12 @@ class Metrics:
         self.edit_calls = 0
         self.engineering_sessions = set()
         self._edited_sessions = {}
+        self.edited_sessions = set()
+        self._final_edits = {}
+        self._verification_events = {}
+        self._event_sequence = 0
+        self._orchestrators = set()
+        self._expanded_orchestrators = set()
         self.engineering_days = set()
         self.files_scanned = 0
         self.files_with_data = 0
@@ -269,6 +282,8 @@ class Metrics:
         self.reasoning_output_tokens = 0
         self.model_usage = {}
         self.daily_model_usage = {}
+        self.role_usage = {}
+        self.daily_role_usage = {}
 
         self.sessions = set()
         self.first_ts = None
@@ -386,26 +401,124 @@ KNOWN_TOOLS = EDIT_TOOLS | SHELL_TOOLS | DELEGATION_TOOLS | {
 }
 
 
-def _tool(m, name, inp, sid, sidechain, ts=None):
+def _tool(m, name, inp, sid, sidechain, ts=None, call_id=None):
     name = name.rsplit('.', 1)[-1] if isinstance(name, str) else 'other_tool'
     name = name if name in KNOWN_TOOLS else 'other_tool'
     m.tools[name] += 1
     m.tool_calls += 1
     m.tool_calls_sidechain += int(sidechain)
+    m._event_sequence += 1
+    order = (ts, m._event_sequence)
     if name in EDIT_TOOLS:
         m.edit_calls += 1
         m._edited_sessions[sid] = ts
+        m.edited_sessions.add(sid)
+        previous = m._final_edits.get(sid)
+        if previous is None or ts is None or previous[0] is None or order > previous:
+            m._final_edits[sid] = order
+    if name == 'exec':
+        key = (sid, call_id) if isinstance(call_id, str) and call_id else (sid, m._event_sequence)
+        m._orchestrators.add(key)
     if name in SHELL_TOOLS:
         cmd = inp.get('command', inp.get('cmd', '')) if isinstance(inp, dict) else ''
         if isinstance(cmd, list) and all(isinstance(v, str) for v in cmd):
             cmd = shlex.join(cmd)
         category = classify_bash(cmd)
         m.bash[category] += 1
+        if category in VERIFICATION_CATEGORIES:
+            key = (sid, call_id) if isinstance(call_id, str) and call_id else (sid, m._event_sequence)
+            m._verification_events[key] = (order, category)
+            m.history.call(sid, call_id)
         edited_at = m._edited_sessions.get(sid)
         if category in VERIFICATION_CATEGORIES and edited_at is not None and ts is not None and ts >= edited_at:
             m.engineering_sessions.add(sid)
             m.engineering_days.add(ts.date())
         return category
+
+
+def verification_coverage(m):
+    """Visible edits and verification returns, never a task-acceptance claim.
+
+    The final status uses the latest recognized build/test call after the last
+    observed edit in that session. Missing timestamps or returns stay unknown.
+    These session counts cannot establish whether a test covered the changed code.
+    """
+    summary = m.history.summary()
+    counts = Counter()
+    categories = {name: Counter(attempts=0, passed=0, failed=0, unknown=0)
+                  for name in sorted(VERIFICATION_CATEGORIES)}
+    events_by_session = {}
+    for key, (order, category) in m._verification_events.items():
+        events_by_session.setdefault(key[0], []).append((order, key))
+        verdict = m.history.results.get(key)
+        categories[category]['attempts'] += 1
+        categories[category]['passed' if verdict is True else 'failed' if verdict is False else 'unknown'] += 1
+    for sid in m.edited_sessions:
+        edit = m._final_edits.get(sid)
+        events = events_by_session.get(sid, [])
+        if not events:
+            counts['without_verification'] += 1
+            continue
+        if edit is None or edit[0] is None or any(order[0] is None for order, _ in events):
+            counts['unknown'] += 1
+            counts['order_unknown'] += 1
+            continue
+        after = [(order, key) for order, key in events if order > edit]
+        if not after:
+            counts['without_verification'] += 1
+            continue
+        counts['verified'] += 1
+        _, latest = max(after)
+        verdict = m.history.results.get(latest)
+        counts['passed' if verdict is True else 'failed' if verdict is False else 'unknown'] += 1
+    denominator = len(m.edited_sessions)
+    return {
+        'edited_sessions': denominator,
+        'any_edit_then_verify_sessions': len(m.engineering_sessions),
+        'final_edit_verified_sessions': counts['verified'],
+        'final_edit_verification_passed_sessions': counts['passed'],
+        'final_edit_verification_failed_sessions': counts['failed'],
+        'final_edit_verification_unknown_sessions': counts['unknown'],
+        'final_edit_without_verification_sessions': counts['without_verification'],
+        'final_edit_order_unknown_sessions': counts['order_unknown'],
+        'final_edit_verification_coverage': counts['verified'] / denominator if denominator else None,
+        'final_edit_success_coverage': counts['passed'] / denominator if denominator else None,
+        'verification_attempts': summary['verification_calls'],
+        'verification_passed': summary['verification_passed'],
+        'verification_failed': summary['verification_failed'],
+        'verification_unknown': summary['verification_unknown'],
+        'categories': {name: dict(values) for name, values in categories.items()},
+        'note': 'Only visible calls are counted. Final status is the latest recognized build/test '
+                'return after the last observed edit; missing ordering or returns remain unknown. '
+                'A successful return does not prove requirement coverage or task acceptance.',
+    }
+
+
+def observability(m):
+    """Report trace coverage without inferring behavior from opaque JavaScript."""
+    total = len(m._orchestrators)
+    expanded = len(m._orchestrators & m._expanded_orchestrators)
+    opaque = total - expanded
+    # Directly constructed metrics and imported older counters remain usable.
+    opaque = max(opaque, m.diagnostics['opaque_orchestrator_calls'])
+    total = max(total, expanded + opaque)
+    unparsed = m.parse_errors + m.diagnostics['unsupported_records'] + m.diagnostics['invalid_records']
+    return {
+        'status': 'partial' if opaque or unparsed or m.diagnostics['missing_or_invalid_timestamps'] else 'direct',
+        'recognized_tool_calls': m.tool_calls,
+        'structured_nested_tool_calls': m.diagnostics['structured_nested_tool_calls'],
+        'public_jsonl_tool_calls': m.diagnostics['public_jsonl_tool_calls'],
+        'orchestrator_calls': total,
+        'expanded_orchestrator_calls': expanded,
+        'opaque_orchestrator_calls': opaque,
+        'orchestrator_expansion_ratio': expanded / total if total else None,
+        'unparsed_records': unparsed,
+        'missing_timestamp_records': m.diagnostics['missing_or_invalid_timestamps'],
+        'may_undercount_edits_and_verification': bool(opaque or unparsed or m.diagnostics['missing_or_invalid_timestamps']),
+        'note': 'Expansion requires an explicit complete nested trace. Visible edit sessions are '
+                'a lower bound when logs are incomplete. Missing timestamps cannot enter dated '
+                'windows or prove final ordering; unobserved calls are not zero calls.',
+    }
 
 
 
@@ -417,7 +530,7 @@ def _model_name(value):
     return value.strip() if isinstance(value, str) and value.strip() else 'unknown'
 
 
-def _add_usage(m, usage, model, ts, reasoning_reported=False):
+def _add_usage(m, usage, model, ts, reasoning_reported=False, role='unknown'):
     """Keep all-time and daily model totals on the same deduplicated stream."""
     for key in USAGE_FIELDS:
         setattr(m, key, getattr(m, key) + usage.get(key, 0))
@@ -427,21 +540,30 @@ def _add_usage(m, usage, model, ts, reasoning_reported=False):
     m.model_usage.setdefault(key, Counter()).update(counts)
     if ts is not None:
         m.daily_model_usage.setdefault((ts.date().isoformat(),) + key, Counter()).update(counts)
+    role_key = (m.source, role)
+    m.role_usage.setdefault(role_key, Counter()).update(counts)
+    if ts is not None:
+        m.daily_role_usage.setdefault((ts.date().isoformat(),) + role_key, Counter()).update(counts)
 
 
 def usage_breakdown(m):
     """Only aggregate counts, dates, source and model names leave the scanner."""
-    def row(key, counts, daily=False):
+    def row(key, counts, daily=False, role=False):
         source, model = key[-2:]
         data = dict(counts)
         data.update(source=source, model=model,
-                    total_tokens=counts['input_tokens'] + counts['output_tokens'])
+                    total_tokens=counts['input_tokens'] + counts['output_tokens'],
+                    uncached_input_tokens=max(0, counts['input_tokens'] - counts['cache_read'] - counts['cache_creation']))
+        if role:
+            data['role'] = data.pop('model')
         if daily:
             data['date'] = key[0]
         return data
     return {
         'models': [row(key, counts) for key, counts in sorted(m.model_usage.items())],
         'daily': [row(key, counts, True) for key, counts in sorted(m.daily_model_usage.items())],
+        'roles': [row(key, counts, role=True) for key, counts in sorted(m.role_usage.items())],
+        'daily_roles': [row(key, counts, True, True) for key, counts in sorted(m.daily_role_usage.items())],
         'timezone': 'UTC',
     }
 
@@ -524,15 +646,15 @@ def scan(claude_dir: Path, since=None, until=None, project_dir=None, progress=No
                     delta = {k: max(0, v - previous.get(k, 0)) for k, v in counts.items()}
                     previous.update({k: max(v, previous.get(k, 0)) for k, v in counts.items()})
                     counts = delta
-                _add_usage(m, counts, msg.get('model'), ts)
+                _add_usage(m, counts, msg.get('model'), ts,
+                           role='subagent' if sidechain else 'executor')
             content = msg.get('content')
             if not isinstance(content, list):
                 continue
             for block in content:
                 if isinstance(block, dict) and block.get('type') == 'tool_use':
-                    category = _tool(m, block.get('name'), block.get('input'), sid, sidechain, ts)
-                    if category in VERIFICATION_CATEGORIES:
-                        m.history.call(sid, block.get('id'))
+                    _tool(m, block.get('name'), block.get('input'), sid, sidechain, ts,
+                          block.get('id'))
         m.files_with_data += int(has_data)
         m.subagent_files += int(has_sidechain)
     if project_dir is None:
@@ -600,7 +722,7 @@ def _codex_human(payload):
 def _codex_meta(path):
     """Small first pass selects canonical streams; no raw data survives the pass."""
     meta, human_events, usage_records, turn_models = {}, False, False, {}
-    cwds = set()
+    cwds, canonical_calls, public_started = set(), set(), set()
     try:
         with path.open(encoding='utf-8', errors='replace') as fh:
             for line in fh:
@@ -610,11 +732,19 @@ def _codex_meta(path):
                     continue
                 if not isinstance(rec, dict):
                     continue
+                if rec.get('type') == 'thread.started':
+                    meta.update(id=rec.get('thread_id'), source='exec')
+                    if isinstance(rec.get('cwd'), str):
+                        meta['cwd'] = rec['cwd']
+                        cwds.add(rec['cwd'])
+                if rec.get('type') == 'item.started' and isinstance(rec.get('item'), dict):
+                    if isinstance(rec['item'].get('id'), str):
+                        public_started.add(rec['item']['id'])
                 p = rec.get('payload')
                 if not isinstance(p, dict):
                     continue
                 if rec.get('type') == 'session_meta':
-                    meta = {k: p.get(k) for k in ('id', 'source', 'thread_source', 'cwd')}
+                    meta = {k: p.get(k) for k in ('id', 'source', 'thread_source', 'cwd', 'role')}
                 if rec.get('type') in ('session_meta', 'turn_context') and isinstance(p.get('cwd'), str):
                     cwds.add(p['cwd'])
                 if rec.get('type') == 'event_msg' and p.get('type') == 'user_message':
@@ -623,10 +753,149 @@ def _codex_meta(path):
                     usage_records = True
                 if rec.get('type') == 'turn_context' and isinstance(p.get('turn_id'), str):
                     turn_models[p['turn_id']] = _model_name(p.get('model'))
+                if rec.get('type') == 'response_item' and p.get('type') in (
+                        'function_call', 'custom_tool_call', 'local_shell_call'):
+                    cid = p.get('call_id', p.get('id'))
+                    if isinstance(cid, str) and cid:
+                        canonical_calls.add(cid)
     except OSError:
         pass
     meta['_cwds'] = cwds
+    meta['_canonical_calls'] = canonical_calls
+    meta['_public_started'] = public_started
     return meta, human_events, usage_records, turn_models
+
+
+def _codex_role(meta):
+    """Role comes from explicit session metadata, never from a model name."""
+    source, thread, role = meta.get('source'), meta.get('thread_source'), meta.get('role')
+    if (role in ('auto_review', 'guardian_review') or thread in ('guardian_review', 'auto_review')
+            or source in ('guardian_review', 'auto_review')):
+        return 'auto_review'
+    if isinstance(source, dict) and 'subagent' in source:
+        marker = source['subagent']
+        if (isinstance(marker, str) and marker in ('guardian_review', 'auto_review')) or (
+                isinstance(marker, dict) and any(key in marker for key in ('guardian_review', 'auto_review'))):
+            return 'auto_review'
+        return 'subagent'
+    if role == 'subagent' or thread == 'subagent' or (
+            isinstance(source, str) and source.lower().startswith('subagent')):
+        return 'subagent'
+    if role == 'executor' or source in ('cli', 'exec', 'vscode', 'app_server', 'codex_cli', 'codex_exec'):
+        return 'executor'
+    return 'unknown'
+
+
+def _public_item_call(item):
+    """Map documented JSONL item types; unknown schemas stay unsupported."""
+    kind = item.get('type')
+    if kind == 'command_execution' and isinstance(item.get('command'), (str, list)):
+        return 'exec_command', {'cmd': item['command']}
+    if kind == 'file_change' and isinstance(item.get('changes'), list):
+        return 'apply_patch', {}
+    if kind == 'mcp_tool_call' and isinstance(item.get('tool'), str):
+        return item['tool'], item.get('arguments')
+    if kind == 'collab_tool_call' and isinstance(item.get('tool'), str):
+        return item['tool'], item.get('arguments')
+    return None
+
+
+def _public_record(rec, meta):
+    """Normalize public exec JSONL to canonical data without reading command output."""
+    kind, item = rec.get('type'), rec.get('item')
+    if kind in ('turn.completed', 'turn.failed'):
+        return {'type': 'event_msg', 'timestamp': rec.get('timestamp'), 'payload': {
+            'type': 'task_complete', 'error': kind == 'turn.failed', '_public': True,
+            '_usage': rec.get('usage')}}
+    if kind not in ('item.started', 'item.completed') or not isinstance(item, dict):
+        return None
+    base = {'type': 'response_item', 'timestamp': rec.get('timestamp')}
+    if item.get('type') == 'agent_message' and kind == 'item.completed':
+        base['payload'] = {'type': 'message', 'role': 'assistant', 'id': item.get('id'), '_public': True}
+        return base
+    mapped = _public_item_call(item)
+    if mapped is None:
+        return None
+    name, args = mapped
+    cid = item.get('id')
+    if kind == 'item.completed' and isinstance(cid, str) and cid in meta['_public_started']:
+        base['payload'] = {'type': 'function_call_output', 'call_id': cid,
+                           'output': item, '_public': True}
+    else:
+        base['payload'] = {'type': 'function_call', 'name': name, 'arguments': args,
+                           'call_id': cid, '_public': True}
+        if kind == 'item.completed':
+            base['payload']['_result'] = command_verdict(item)
+    return base
+
+
+def _structured_event(rec, meta):
+    """Use typed begin/end notifications only when canonical calls are absent."""
+    p = rec.get('payload')
+    if rec.get('type') != 'event_msg' or not isinstance(p, dict):
+        return None
+    kind, cid = p.get('type'), p.get('call_id')
+    if kind not in ('exec_command_begin', 'exec_command_end', 'tool_call_begin', 'tool_call_end'):
+        return None
+    if not isinstance(cid, str) or not cid or cid in meta['_canonical_calls']:
+        return None
+    payload = {'call_id': cid, '_structured': True,
+               'parent_call_id': p.get('parent_call_id')}
+    if kind.endswith('_begin'):
+        if kind == 'exec_command_begin':
+            name, args = 'exec_command', {'command': p.get('command', p.get('cmd'))}
+        else:
+            name, args = p.get('name', p.get('tool_name')), p.get('arguments', p.get('input'))
+        if not isinstance(name, str):
+            return None
+        payload.update(type='function_call', name=name, arguments=args)
+    else:
+        payload.update(type='function_call_output', output=p.get('output', p))
+    return {'type': 'response_item', 'timestamp': rec.get('timestamp'), 'payload': payload}
+
+
+def _nested_trace(m, p, sid, sidechain, ts, seen_calls):
+    """Read explicit nested trace arrays. JavaScript and free text remain opaque."""
+    data = p.get('output') if isinstance(p.get('output'), dict) else p
+    nested = data.get('nested_tool_calls')
+    if not isinstance(nested, list):
+        return
+    parent = p.get('call_id', p.get('id'))
+    complete = data.get('nested_tool_calls_complete') is True
+    valid = True
+    for item in nested:
+        if not isinstance(item, dict) or not isinstance(item.get('name'), str):
+            valid = False
+            m.diagnostics['invalid_nested_tool_events'] += 1
+            continue
+        cid = item.get('call_id', item.get('id'))
+        if not isinstance(cid, str) or not cid or cid == parent:
+            valid = False
+            m.diagnostics['invalid_nested_tool_events'] += 1
+            continue
+        key = sid, cid
+        if key in seen_calls:
+            if 'output' in item:
+                m.history.result(sid, cid, command_verdict(item['output']))
+            continue
+        args = item.get('arguments', item.get('input'))
+        if isinstance(args, str) and item.get('type') != 'custom_tool_call':
+            try:
+                args = json.loads(args)
+            except ValueError:
+                m.diagnostics['invalid_tool_arguments'] += 1
+                args = {}
+        # Parent completion time cannot prove when a nested call occurred.
+        nested_ts = record_ts(item)
+        if nested_ts is None:
+            m.diagnostics['missing_or_invalid_timestamps'] += 1
+        seen_calls.add(key)
+        _tool(m, item['name'], args, sid, sidechain, nested_ts, cid)
+        m.diagnostics['structured_nested_tool_calls'] += 1
+        if 'output' in item:
+            m.history.result(sid, cid, command_verdict(item['output']))
+    if complete and valid and isinstance(parent, str) and parent:
+        m._expanded_orchestrators.add((sid, parent))
 
 
 def _codex_usage(usage, m):
@@ -637,14 +906,14 @@ def _codex_usage(usage, m):
              'reasoning_output_tokens')}
 
 
-def _add_codex_usage(m, usage, model, ts, reasoning_reported=False):
+def _add_codex_usage(m, usage, model, ts, reasoning_reported=False, role='unknown'):
     _add_usage(m, {
         'input_tokens': usage['input_tokens'],
         'cache_read': usage['cached_input_tokens'],
         'cache_creation': usage['cache_write_input_tokens'],
         'output_tokens': usage['output_tokens'],
         'reasoning_output_tokens': usage['reasoning_output_tokens'],
-    }, model, ts, reasoning_reported)
+    }, model, ts, reasoning_reported, role)
 
 
 def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progress=None) -> Metrics:
@@ -664,20 +933,28 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progre
                 continue
             current_cwd = meta.get('cwd')
             source = meta.get('source')
-            sidechain = (isinstance(source, dict) and 'subagent' in source) or (
-                isinstance(source, str) and source.lower().startswith('subagent')) or (
-                meta.get('thread_source') in ('subagent', 'guardian_review'))
+            role = _codex_role(meta)
+            sidechain = role in ('subagent', 'auto_review')
             sid = ('codex', meta.get('id') if isinstance(meta.get('id'), str) else str(path))
             previous_usage = {}
             current_model = 'unknown'
             has_data = False
-            for rec in _records(path, m):
+            for record_index, rec in enumerate(_records(path, m)):
+                normalized = _public_record(rec, meta) or _structured_event(rec, meta)
+                if normalized is not None:
+                    rec = normalized
+                    if rec['payload'].get('_public'):
+                        rec['payload']['_public_index'] = record_index
                 p = rec.get('payload')
                 if not isinstance(p, dict):
+                    if rec.get('type') == 'thread.started':
+                        continue
                     m.diagnostics['unsupported_records'] += 1
                     continue
                 kind, ptype = rec.get('type'), p.get('type')
                 ts = record_ts(rec)
+                if ts is None and kind in ('response_item', 'event_msg', 'token_usage_record'):
+                    m.diagnostics['missing_or_invalid_timestamps'] += 1
                 in_window = _in_window(ts, since, until)
                 if kind == 'turn_context':
                     if isinstance(p.get('cwd'), str):
@@ -703,18 +980,26 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progre
                     key = (sid, tuple(total.items()), rec.get('timestamp'))
                     if in_window and project_matches(current_cwd, project_dir) and key not in seen_usage:
                         _add_codex_usage(m, delta, current_model, ts,
-                                         'reasoning_output_tokens' in info['total_token_usage'])
+                                         'reasoning_output_tokens' in info['total_token_usage'], role)
                         seen_usage.add(key)
                     continue
                 if not in_window or not project_matches(current_cwd, project_dir):
                     continue
+                if p.get('_public') and isinstance(p.get('_usage'), dict):
+                    usage = _codex_usage(p['_usage'], m)
+                    key = (sid, 'public_usage', hashlib.sha256(json.dumps(rec, sort_keys=True).encode()).digest())
+                    if key not in seen_usage:
+                        _add_codex_usage(m, usage, current_model, ts,
+                                         'reasoning_output_tokens' in p['_usage'], role)
+                        seen_usage.add(key)
                 if kind == 'event_msg' and ptype in ('task_complete', 'turn_aborted', 'task_started'):
                     status = ('interrupted' if ptype == 'turn_aborted' or p.get('error') else
                               'ended' if ptype == 'task_complete' else 'active')
                     m.history.state(sid, ts, status, sidechain,
-                                    (ptype, p.get('turn_id'), rec.get('timestamp')))
+                                    (ptype, p.get('turn_id'), rec.get('timestamp'), p.get('_public_index')))
                 if kind == 'response_item' and ptype in ('function_call_output', 'custom_tool_call_output'):
                     m.history.result(sid, p.get('call_id'), command_verdict(p.get('output')))
+                    _nested_trace(m, p, sid, sidechain, ts, seen_calls)
                 if kind == 'token_usage_record':
                     usage = _codex_usage(p.get('usage'), m)
                     response_id = p.get('response_id')
@@ -726,7 +1011,7 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progre
                             turn_id = p.get('turn_id')
                             model = turn_models.get(turn_id, 'unknown') if isinstance(turn_id, str) else current_model
                         _add_codex_usage(m, usage, model, ts,
-                                         'reasoning_output_tokens' in p['usage'])
+                                         'reasoning_output_tokens' in p['usage'], role)
                         seen_usage.add(key)
                     continue
                 is_human = ((kind == 'event_msg' and ptype == 'user_message') or
@@ -749,12 +1034,10 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progre
                 if is_call:
                     call_id = p.get('call_id', p.get('id'))
                     if isinstance(call_id, str):
-                        if call_id in seen_calls:
+                        if (sid, call_id) in seen_calls:
                             m.diagnostics['duplicate_tool_calls'] += 1
                             continue
-                        seen_calls.add(call_id)
-                if ts is None:
-                    m.diagnostics['missing_or_invalid_timestamps'] += 1
+                        seen_calls.add((sid, call_id))
                 _observe(m, ts, sid)
                 has_data = True
                 m.history.state(sid, ts, 'active', sidechain)
@@ -777,14 +1060,18 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progre
                         except ValueError:
                             m.diagnostics['invalid_tool_arguments'] += 1
                             args = {}
-                    category = _tool(m, name, args, sid, sidechain, ts)
-                    if category in VERIFICATION_CATEGORIES:
-                        m.history.call(sid, p.get('call_id', p.get('id')))
-                    if isinstance(name, str) and name.rsplit('.', 1)[-1] == 'exec':
-                        # Code-mode JS can construct dynamic calls. Never execute or guess them.
-                        m.diagnostics['opaque_orchestrator_calls'] += 1
+                    _tool(m, name, args, sid, sidechain, ts, p.get('call_id', p.get('id')))
+                    if p.get('_public'):
+                        m.diagnostics['public_jsonl_tool_calls'] += 1
+                    if p.get('_structured') and isinstance(p.get('parent_call_id'), str):
+                        m.diagnostics['structured_nested_tool_calls'] += 1
+                    if '_result' in p:
+                        m.history.result(sid, p.get('call_id'), p['_result'])
+                    _nested_trace(m, p, sid, sidechain, ts, seen_calls)
             m.files_with_data += int(has_data)
             m.subagent_files += int(has_data and sidechain)
+    m.diagnostics['opaque_orchestrator_calls'] = len(m._orchestrators - m._expanded_orchestrators)
+    m.diagnostics['expanded_orchestrator_calls'] = len(m._orchestrators & m._expanded_orchestrators)
     return m
 
 
@@ -803,13 +1090,16 @@ def merge_metrics(items):
         merged.project_filtered |= m.project_filtered
         for key in sums:
             setattr(merged, key, getattr(merged, key) + getattr(m, key))
-        for attr in ('model_usage', 'daily_model_usage'):
+        for attr in ('model_usage', 'daily_model_usage', 'role_usage', 'daily_role_usage'):
             for key, counts in getattr(m, attr).items():
                 getattr(merged, attr).setdefault(key, Counter()).update(counts)
         for key in ('tools', 'bash', 'diagnostics'):
             getattr(merged, key).update(getattr(m, key))
-        for key in ('sessions', 'days', 'engineering_sessions', 'engineering_days'):
+        for key in ('sessions', 'days', 'engineering_sessions', 'engineering_days', 'edited_sessions',
+                    '_orchestrators', '_expanded_orchestrators'):
             getattr(merged, key).update(getattr(m, key))
+        merged._final_edits.update(m._final_edits)
+        merged._verification_events.update(m._verification_events)
         if m.first_ts:
             merged.first_ts = min(merged.first_ts, m.first_ts) if merged.first_ts else m.first_ts
         if m.last_ts:

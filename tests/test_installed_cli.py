@@ -65,6 +65,7 @@ class TestInstalledCLI(unittest.TestCase):
             task_dir = run(recorder, 'start', '--repo', str(workspace), '--source', 'codex',
                            '--model', 'synthetic-test', '--criteria', 'Installed command smoke check',
                            '--', python, '-c', 'assert sum([1, 2, 3]) == 6').strip()
+            self.assertEqual(Path(task_dir).parent, workspace / '.codex/agent_level/tasks')
             self.assertTrue(json.loads(run(recorder, 'finish', '--task-dir', task_dir))['passed'])
             empty_logs = root / 'empty-logs'
             empty_logs.mkdir()

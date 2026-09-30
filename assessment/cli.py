@@ -17,7 +17,7 @@ def main(argv=None):
     parser.add_argument('--version', action='version', version=assess.VERSION)
     commands = parser.add_subparsers(title='commands', dest='command')
     commands.add_parser('assess', help='Analyze local activity and generate an offline report')
-    commands.add_parser('record', help='Register a task or finish its acceptance check')
+    commands.add_parser('record', help='Register acceptance, record human review, or locate task evidence')
     commands.add_parser('compare', help='Open the existing before/after evidence comparison view')
     if args and args[0] in ('-h', '--help', '--version'):
         parser.parse_args(args)

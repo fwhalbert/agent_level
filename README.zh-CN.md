@@ -12,10 +12,11 @@ Agent Level 基于 **Claude Code 和 Codex** 的本地活动与任务证据，
 - **了解工作方式：** 查看 L0–L7 候选等级、判断依据和缺少的条件。
 - **查看任务结果：** 汇总预先登记的验收检查结果。
 - **对比改进效果：** 在同一冻结任务集上对比工作流变更。
-- **查看使用情况：** 展示每日 Token 用量、模型占比和缓存使用。
+- **查看使用情况：** 展示每日 Token 用量、模型与角色占比和缓存使用。
+- **检查验证覆盖：** 区分最后编辑后的验证、历史工作流信号和日志采集缺口。
 
 支持中英文离线 HTML 报告，也可导出文本、Markdown 和 JSON。
-报告包含汇总信息，不包含原始对话或源码。
+报告包含汇总信息和不透明诊断引用，不包含原始对话或源码。
 
 **本地分析 · 不上传源码 · 基于证据 · 中英文报告**
 
@@ -72,6 +73,7 @@ hook 只显示 “Auto eval enabled.”；Codex 的新 hook 需要先在 `/hooks
 
 - [配置与任务记录](docs/SETUP.md)
 - [任务评估与 JSON 协议](docs/ANTHROPIC.md)
+- [工作流指标、冻结标准与人工复核](docs/WORKFLOW_METRICS.md)
 - [改进前后对照](docs/IMPROVEMENT_EVALUATION.md)
 - [OpenAI 指南与实现范围](docs/OPENAI.md)
 - [方法、一手来源与限制](docs/REFERENCES.md)
