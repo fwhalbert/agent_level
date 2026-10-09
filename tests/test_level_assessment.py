@@ -123,6 +123,28 @@ class TestBashClassifier(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertEqual(classify_bash(command), category)
 
+    def test_shell_scripts_and_recorder_finish(self):
+        cases = [
+            ('bash scripts/fast_build.sh --release', 'build'),
+            ('/home/u/ws/scripts/fast_build.sh', 'build'),
+            ('bash -lc "./scripts/fast_build.sh"', 'build'),
+            ('bash ./run_tests.sh x', 'test'),
+            ('sh scripts/check.sh', 'test'),
+            ('scripts/run_tests.py -v', 'test'),
+            ('bash scripts/info.sh', 'other'),
+            ('scripts/rebuild_index.py', 'other'),
+            ('scripts/checkout.sh', 'other'),
+            ('bash -x deploy.sh', 'other'),
+            ('cat scripts/test.sh', 'read'),
+            ('.venv/bin/agent-level-record finish --task-dir /t', 'test'),
+            ('agent-level record finish --task-dir /t', 'test'),
+            ('agent-level-record finish --task-dir /t --unknown blocked', 'other'),
+            ('agent-level-record start --repo /r -- true', 'other'),
+        ]
+        for command, category in cases:
+            with self.subTest(command=command):
+                self.assertEqual(classify_bash(command), category)
+
     def test_heredoc_body_ignored(self):
         # Heredoc bodies are data, not build commands.
         self.assertEqual(

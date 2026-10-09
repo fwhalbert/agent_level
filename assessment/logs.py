@@ -9,7 +9,7 @@ from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
-from .history import History, project_matches, command_verdict
+from .history import History, project_matches, command_verdict, exit_code
 
 DELEGATION_TOOLS = {"Task", "Agent", "Workflow", "spawn_agent", "send_input", "followup_task"}
 WORKFLOW_TOOLS = {"Workflow"}
@@ -28,11 +28,14 @@ BASH_CATEGORIES = [
                  r"|^make\s+(-\S+\s+)*(check|test|run)(-\S+)?\b"
                  # Direct execution of local test binaries or scripts: ./test_x, ./build/bin/foo_test, ./run_tests.sh
                  r"|^(\./|\.\./|/)\S*(^|[/_-])?test[\w.-]*\b"
-                 r"|^\./?run_tests?\b"),
+                 r"|^\./?run_tests?\b"
+                 r"|^(\S*/)?[\w.-]*(?<![A-Za-z])(tests?|check)(?![A-Za-z])[\w.-]*\.(sh|py)\b"
+                 r"|^(\S*/)?agent-level(-record|\s+record)\s+finish\b(?!.*\s--unknown\b)"),
     ("build", 75, r"^(make|cmake|ninja|bazel|meson|gcc|g\+\+|clang|clang\+\+|cc|ld|tsc|webpack|vite|esbuild|rollup)\b"
                   r"|^(cargo|go|dotnet|mvn|gradle|swift)\s+build\b"
                   r"|^(npm|pnpm|yarn|bun)\s+(run\s+)?build\b"
-                  r"|^west\s+build\b|^idf\.py\b|^xcodebuild\b"),
+                  r"|^west\s+build\b|^idf\.py\b|^xcodebuild\b"
+                  r"|^(\S*/)?[\w.-]*(?<![A-Za-z])build(?![A-Za-z])[\w.-]*\.(sh|py)\b"),
     ("git", 70, r"^git\b|^gh\s+(repo|issue|api|release)\b|^glab\b"),
     ("docker", 65, r"^(docker|docker-compose|podman|kubectl|helm)\b"),
     ("ssh", 60, r"^(ssh|scp|sftp|rsync)\b"),
@@ -45,6 +48,7 @@ BASH_CATEGORY_ORDER = ["search", "read", "build", "test", "git", "python",
                        "node", "docker", "ssh", "pr", "ci", "other"]
 
 _COMPILED_BASH = [(name, prio, re.compile(pat)) for name, prio, pat in BASH_CATEGORIES]
+RECORDER_FINISH_RE = re.compile(r"\bagent-level(-record|\s+record)\s+finish\b")
 VERIFICATION_CATEGORIES = {"build", "test"}
 PATH_EXECUTABLES = {
     'bash', 'sh', 'zsh', 'pytest', 'tox', 'nose2', 'jest', 'vitest', 'mocha', 'ctest',
@@ -123,8 +127,10 @@ def _unwrap(tokens):
             tokens = tokens[2:]
         elif first in ("uv", "poetry") and tokens[1:2] == ["run"]:
             tokens = tokens[2:]
-        elif first in ("bash", "sh", "zsh") and len(tokens) > 2 and "c" in tokens[1]:
+        elif first in ("bash", "sh", "zsh") and len(tokens) > 2 and re.fullmatch(r"-[a-z]*c[a-z]*", tokens[1]):
             return tokens, tokens[2]
+        elif first in ("bash", "sh", "zsh") and len(tokens) > 1 and not tokens[1].startswith("-"):
+            tokens.pop(0)
         else:
             break
     return tokens, None
@@ -428,7 +434,7 @@ def _tool(m, name, inp, sid, sidechain, ts=None, call_id=None):
         if category in VERIFICATION_CATEGORIES:
             key = (sid, call_id) if isinstance(call_id, str) and call_id else (sid, m._event_sequence)
             m._verification_events[key] = (order, category)
-            m.history.call(sid, call_id)
+            m.history.call(sid, call_id, RECORDER_FINISH_RE.search(cmd) is not None)
         edited_at = m._edited_sessions.get(sid)
         if category in VERIFICATION_CATEGORIES and edited_at is not None and ts is not None and ts >= edited_at:
             m.engineering_sessions.add(sid)
@@ -568,6 +574,14 @@ def usage_breakdown(m):
     }
 
 
+def _claude_exit_code(block):
+    content = block.get('content')
+    if isinstance(content, list):
+        content = next((b.get('text') for b in content if isinstance(b, dict) and isinstance(b.get('text'), str)), None)
+    match = re.match(r'Exit code (\d+)\b', content) if block.get('is_error') is True and isinstance(content, str) else None
+    return int(match[1]) if match else None
+
+
 def scan(claude_dir: Path, since=None, until=None, project_dir=None, progress=None) -> Metrics:
     m = Metrics('claude')
     m.project_filtered = project_dir is not None
@@ -624,7 +638,7 @@ def scan(claude_dir: Path, since=None, until=None, project_dir=None, progress=No
                         ('interrupted', 'backgroundTaskId', 'taskId', 'timedOutAfterMs'))
                     error = block.get('is_error')
                     verdict = not error if type(error) is bool and not incomplete else None
-                    m.history.result(sid, block.get('tool_use_id'), verdict)
+                    m.history.result(sid, block.get('tool_use_id'), verdict, _claude_exit_code(block))
                 continue
             m.assistant += 1
             m.assistant_sidechain += int(sidechain)
@@ -713,7 +727,7 @@ def _codex_human(payload):
         return attachment
     text = text.strip()
     if text.startswith(('# AGENTS.md instructions', '<environment_context>',
-                        '<permissions instructions>', '<turn_aborted>',
+                        '<permissions instructions>', '<turn_aborted>', '<recommended_plugins>',
                         '<subagent_notification>', '<system-reminder>')):
         return False
     return bool(text) or attachment
@@ -825,8 +839,38 @@ def _public_record(rec, meta):
         base['payload'] = {'type': 'function_call', 'name': name, 'arguments': args,
                            'call_id': cid, '_public': True}
         if kind == 'item.completed':
-            base['payload']['_result'] = command_verdict(item)
+            base['payload'].update(_result=command_verdict(item), _exit_code=exit_code(item))
     return base
+
+
+def _completed_item(rec, meta):
+    """Map typed completions of calls made inside code orchestration; canonical mirrors share the call id."""
+    p = rec['payload']
+    item = p.get('item')
+    if not isinstance(item, dict):
+        return None
+    cid, kind = item.get('id'), item.get('type')
+    if not isinstance(cid, str) or not cid or cid in meta['_canonical_calls']:
+        return None
+    ts = rec.get('timestamp')
+    if (kind == 'CommandExecution' and isinstance(item.get('command'), (str, list))
+            and item.get('status') in ('completed', 'failed')):
+        # Background commands can complete after a later edit; ordering uses the start time.
+        started = p.get('started_at_ms')
+        if type(started) is int and started >= 0:
+            try:
+                ts = datetime.fromtimestamp(started / 1000, timezone.utc).isoformat()
+            except (OverflowError, OSError, ValueError):
+                pass
+        payload = {'name': 'exec_command', 'arguments': {'cmd': item['command']},
+                   '_result': command_verdict(item), '_exit_code': exit_code(item)}
+    elif (kind == 'FileChange' and isinstance(item.get('changes'), (dict, list))
+            and item.get('status') == 'completed'):
+        payload = {'name': 'apply_patch', 'arguments': {}}
+    else:
+        return None
+    payload.update(type='function_call', call_id=cid, _structured=True, _nested=True)
+    return {'type': 'response_item', 'timestamp': ts, 'payload': payload}
 
 
 def _structured_event(rec, meta):
@@ -835,6 +879,8 @@ def _structured_event(rec, meta):
     if rec.get('type') != 'event_msg' or not isinstance(p, dict):
         return None
     kind, cid = p.get('type'), p.get('call_id')
+    if kind == 'item_completed':
+        return _completed_item(rec, meta)
     if kind not in ('exec_command_begin', 'exec_command_end', 'tool_call_begin', 'tool_call_end'):
         return None
     if not isinstance(cid, str) or not cid or cid in meta['_canonical_calls']:
@@ -876,7 +922,7 @@ def _nested_trace(m, p, sid, sidechain, ts, seen_calls):
         key = sid, cid
         if key in seen_calls:
             if 'output' in item:
-                m.history.result(sid, cid, command_verdict(item['output']))
+                m.history.result(sid, cid, command_verdict(item['output']), exit_code(item['output']))
             continue
         args = item.get('arguments', item.get('input'))
         if isinstance(args, str) and item.get('type') != 'custom_tool_call':
@@ -893,7 +939,7 @@ def _nested_trace(m, p, sid, sidechain, ts, seen_calls):
         _tool(m, item['name'], args, sid, sidechain, nested_ts, cid)
         m.diagnostics['structured_nested_tool_calls'] += 1
         if 'output' in item:
-            m.history.result(sid, cid, command_verdict(item['output']))
+            m.history.result(sid, cid, command_verdict(item['output']), exit_code(item['output']))
     if complete and valid and isinstance(parent, str) and parent:
         m._expanded_orchestrators.add((sid, parent))
 
@@ -998,7 +1044,8 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progre
                     m.history.state(sid, ts, status, sidechain,
                                     (ptype, p.get('turn_id'), rec.get('timestamp'), p.get('_public_index')))
                 if kind == 'response_item' and ptype in ('function_call_output', 'custom_tool_call_output'):
-                    m.history.result(sid, p.get('call_id'), command_verdict(p.get('output')))
+                    m.history.result(sid, p.get('call_id'), command_verdict(p.get('output')),
+                                     exit_code(p.get('output')))
                     _nested_trace(m, p, sid, sidechain, ts, seen_calls)
                 if kind == 'token_usage_record':
                     usage = _codex_usage(p.get('usage'), m)
@@ -1063,10 +1110,10 @@ def scan_codex(codex_dir: Path, since=None, until=None, project_dir=None, progre
                     _tool(m, name, args, sid, sidechain, ts, p.get('call_id', p.get('id')))
                     if p.get('_public'):
                         m.diagnostics['public_jsonl_tool_calls'] += 1
-                    if p.get('_structured') and isinstance(p.get('parent_call_id'), str):
+                    if p.get('_structured') and (p.get('_nested') or isinstance(p.get('parent_call_id'), str)):
                         m.diagnostics['structured_nested_tool_calls'] += 1
                     if '_result' in p:
-                        m.history.result(sid, p.get('call_id'), p['_result'])
+                        m.history.result(sid, p.get('call_id'), p['_result'], p.get('_exit_code'))
                     _nested_trace(m, p, sid, sidechain, ts, seen_calls)
             m.files_with_data += int(has_data)
             m.subagent_files += int(has_data and sidechain)

@@ -23,6 +23,8 @@
 - Add final-edit verification coverage and structured/opaque tool visibility without changing level gates.
 - Freeze new acceptance plans, record standard provenance and append typed human review separately.
 - Add stable diagnostic references, normalized failure reasons and token breakdowns by recorded role.
+- Count typed Codex `item_completed` command/file-change records from code orchestration, skipping mirrors of canonical calls; recognize `bash <script>` and build/test/check scripts, treat `agent-level-record finish` as acceptance verification with exit 2 unknown, and exclude `<recommended_plugins>` from human input. Historical L0–L4 reports can change.
+- End each assessment run with a key-metrics table per source; HTML output prints only its browser link.
 
 Existing v1 functionality includes local Claude Code/Codex analysis, L0–L4
 workflow candidates, task acceptance evidence, controlled before/after comparison,

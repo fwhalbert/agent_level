@@ -180,6 +180,27 @@ def level_label(level):
     return "Unknown" if level is None else f"L{level}"
 
 
+KEY_METRICS = (
+    ("Level", lambda r: level_label(r["current_level"])),
+    ("Recognized tool calls", lambda r: f"{r['tool_observability']['recognized_tool_calls']:,}"),
+    ("Opaque orchestration calls", lambda r: f"{r['tool_observability']['opaque_orchestrator_calls']:,}"),
+    ("Sessions with edits", lambda r: f"{r['verification_coverage']['edited_sessions']:,}"),
+    ("Edit → verify sessions", lambda r: f"{r['observed']['engineering_sessions']:,}"),
+)
+
+
+def render_key_metrics(reports):
+    names = [name for name in reports if name != "combined"] or list(reports)
+    rows = [["Metric", *(name.capitalize() for name in names)]]
+    rows += [[label, *(value(reports[name]) for name in names)] for label, value in KEY_METRICS]
+    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
+    lines = ["| " + " | ".join(cell.ljust(widths[0]) if i == 0 else cell.rjust(widths[i])
+                               for i, cell in enumerate(row)) + " |" for row in rows]
+    lines.insert(1, "|" + "|".join("-" * (widths[0] + 2) if i == 0 else "-" * (width + 1) + ":"
+                                   for i, width in enumerate(widths)) + "|")
+    return "\n".join(lines)
+
+
 def window_str(m: Metrics, since, until):
     if m.first_ts and m.last_ts:
         return f"{m.first_ts.date()} .. {m.last_ts.date()}"
@@ -214,7 +235,7 @@ def render_report(report, markdown=False):
         lines.append(report['note'])
     visibility = report.get('level_visibility', {})
     if visibility.get('may_undercount_edits_and_verification'):
-        lines.append(f"Code orchestration calls {visibility['opaque_orchestrator_calls']} have no visible nested tool trace. "
+        lines.append(f"Code orchestration calls {visibility['opaque_orchestrator_calls']} have no complete nested tool trace. "
                      "Log levels may undercount edits and verification. See the Anthropic evaluation for task acceptance results.")
     observed = report['observed']
     lines.extend(['', heading('Observed')])
@@ -545,12 +566,14 @@ def main(argv=None, *, default_method='levels') -> int:
             output_path.parent.mkdir(parents=True, exist_ok=True)
             output_path.write_text(out + "\n", encoding="utf-8")
             absolute_path = output_path.resolve()
-            print(f"[ok] report written: {absolute_path}", file=sys.stderr)
             if fmt == "html":
                 print(f"[open in browser] {absolute_path.as_uri()}", file=sys.stderr)
+            else:
+                print(f"[ok] report written: {absolute_path}", file=sys.stderr)
     except OSError:
         print("[error] cannot write report", file=sys.stderr)
         return 2
+    print("\n" + render_key_metrics(reports), file=sys.stderr)
     return 0
 
 

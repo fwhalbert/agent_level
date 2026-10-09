@@ -18,25 +18,31 @@ def project_matches(cwd, project_dir):
         return False
 
 
-def command_verdict(output):
+def exit_code(output):
     if isinstance(output, str):
         try:
             output = json.loads(output)
         except ValueError:
             match = re.match(r'\A(?:Chunk ID: [^\n]+\n)?Wall time: [^\n]+\n'
                              r'(?:Process exited with code|Exit code:)\s*(-?\d+)\n', output)
-            return int(match[1]) == 0 if match and int(match[1]) >= 0 else None
+            return int(match[1]) if match and int(match[1]) >= 0 else None
     if isinstance(output, dict):
         code = output.get('exit_code')
         if type(code) is int and code >= 0 and not output.get('timed_out') and not output.get('session_id'):
-            return code == 0
+            return code
     return None
+
+
+def command_verdict(output):
+    code = exit_code(output)
+    return None if code is None else code == 0
 
 
 class History:
     def __init__(self):
         self.states = {}
         self.calls = set()
+        self.recorder_calls = set()
         self.results = {}
         self.unidentified = 0
         self.events = set()
@@ -56,16 +62,21 @@ class History:
         if previous is None or order > previous[0]:
             self.states[sid] = order, status
 
-    def call(self, sid, call_id):
+    def call(self, sid, call_id, recorder=False):
         if isinstance(call_id, str) and call_id:
             self.calls.add((sid, call_id))
+            if recorder:
+                self.recorder_calls.add((sid, call_id))
         else:
             self.unidentified += 1
 
-    def result(self, sid, call_id, verdict):
+    def result(self, sid, call_id, verdict, code=None):
         if not isinstance(call_id, str) or not call_id:
             return
         key = sid, call_id
+        # The recorder exits 1 for a failed acceptance and 2 for unknown or recording errors.
+        if key in self.recorder_calls and verdict is False and code != 1:
+            verdict = None
         if key not in self.calls or verdict is None:
             return
         if key in self.results and self.results[key] is not verdict:
@@ -92,6 +103,7 @@ class History:
         self.unidentified += other.unidentified
         for key, verdict in other.results.items():
             self.result(*key, verdict)
+        self.recorder_calls.update(other.recorder_calls)
 
 
 HISTORY_NOTE = ('Historical sessions are not tasks. An end marker only means the latest turn ended; '
@@ -107,6 +119,6 @@ def render_history(activity):
             'failed returns {verification_failed} / unknown results {verification_unknown}\n'.format(**activity) + HISTORY_NOTE)
 
     if activity.get('opaque_orchestrator_calls'):
-        text += ('\nUnexpanded orchestration calls {}; internal verification is excluded from these counts. '
+        text += ('\nUnexpanded orchestration calls {}; internal verification is counted only from typed completion records. '
                  'Zero recognized calls does not imply no verification.').format(activity['opaque_orchestrator_calls'])
     return text

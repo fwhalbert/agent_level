@@ -49,8 +49,8 @@ HTML includes “Historical activity · Completion signals”; JSON uses `anthro
 
 - Counts primary sessions whose latest turn ended, was interrupted/errored, or lacks an end marker. Subagents are excluded from session counts.
 - Links recognizable build/test calls to success, failure, or unknown returns by call ID. Recognized subagent verification calls are included.
-- Claude uses explicit `end_turn` and synchronous `is_error`; background, timeout, and missing returns remain unknown. Codex uses task_complete/turn_aborted and explicit exit codes in linked command output.
-- Opaque code orchestration is reported separately. Its internal verification is not counted, so zero recognizable verification calls does not imply no verification.
+- Claude uses explicit `end_turn` and synchronous `is_error`; background, timeout, and missing returns remain unknown. Codex uses task_complete/turn_aborted and explicit exit codes in linked command output. `agent-level-record finish` counts as a test unless it carries `--unknown`; its exit code 2 is unknown, not failed.
+- Opaque code orchestration is reported separately. Its internal verification is counted only from typed completion records, so zero recognizable verification calls does not imply no verification.
 
 These are historical signals, not retroactive acceptance tasks. A session end does not prove requirements were met, and a successful tool return does not prove sufficient test coverage. `task_success_rate` stays null; strict task success requires registered tasks and acceptance evidence. Reports contain only aggregates, not paths, session IDs, prompts, commands, or tool output. A session's working directory does not prove all modified files belonged to that repository.
 

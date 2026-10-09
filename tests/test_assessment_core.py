@@ -74,7 +74,8 @@ class TestCodex(TempCase):
     def test_response_user_fallback_excludes_injected_context(self):
         self.codex([message('user', '# AGENTS.md instructions for /tmp'),
                     message('user', '<environment_context>data</environment_context>'),
-                    message('user', '<turn_aborted>'), message('user', 'implement'),
+                    message('user', '<turn_aborted>'), message('user', '<recommended_plugins>\nPRIVATE_LIST'),
+                    message('user', 'implement'),
                     message('developer'), message('assistant')])
         self.assertEqual(L.scan_codex(self.root).humanish_user, 1)
 
@@ -230,6 +231,32 @@ class TestVerificationCoverage(TempCase):
         summary = L.scan_codex(self.root).history.summary()
         self.assertEqual((summary['verification_calls'], summary['verification_passed'], summary['verification_failed']), (2, 1, 1))
 
+    def test_recorder_finish_exit_two_is_unknown_not_failed(self):
+        rows = []
+        for cid, code in (('passed', 0), ('failed', 1), ('unknown', 2)):
+            rows += [call('exec_command', {'cmd': '.venv/bin/agent-level-record finish --task-dir /t'}, cid),
+                     self.output(cid, code)]
+        rows.append(call('exec_command', {'cmd': 'agent-level-record finish --task-dir /t --unknown blocked'}, 'skipped'))
+        self.codex(rows)
+        summary = L.scan_codex(self.root).history.summary()
+        self.assertEqual((summary['verification_calls'], summary['verification_passed'],
+                          summary['verification_failed'], summary['verification_unknown']), (3, 1, 1, 1))
+
+    def test_claude_recorder_exit_code_comes_from_error_result(self):
+        rows = []
+        for index, content in enumerate(('Exit code 1\nfailed', 'Exit code 2\nunknown',
+                                         [{'type': 'text', 'text': 'Exit code 2'}])):
+            use = assistant(tools=[('Bash', {'command': 'agent-level record finish --task-dir /t'})])
+            use['message']['content'][1]['id'] = f'finish-{index}'
+            rows += [use, user([{'type': 'tool_result', 'tool_use_id': f'finish-{index}',
+                                 'is_error': True, 'content': content}])]
+        rows += [assistant(tools=[('Bash', {'command': 'make'})]),
+                 user([{'type': 'tool_result', 'tool_use_id': 't', 'is_error': True, 'content': 'Exit code 2'}])]
+        self.write('projects/a.jsonl', rows)
+        summary = L.scan(self.root).history.summary()
+        self.assertEqual((summary['verification_calls'], summary['verification_failed'],
+                          summary['verification_unknown']), (4, 2, 2))
+
 
 class TestStructuredCodexLogs(TempCase):
     def test_explicit_complete_nested_trace_can_expose_edit_and_verify(self):
@@ -274,6 +301,66 @@ class TestStructuredCodexLogs(TempCase):
         self.assertEqual(metrics.tool_calls, 3)
         self.assertEqual((summary['verification_calls'], summary['verification_passed'], summary['verification_failed']), (2, 1, 1))
         self.assertEqual(metrics.diagnostics['structured_nested_tool_calls'], 1)
+
+    def completed(self, kind, cid, ts, started=None, **item):
+        payload = {'type': 'item_completed', 'item': {'type': kind, 'id': cid, **item}}
+        if started is not None:
+            payload['started_at_ms'] = int(L.record_ts({'timestamp': started}).timestamp() * 1000)
+        return record('event_msg', payload, ts)
+
+    def test_completed_items_inside_code_orchestration_expose_edit_and_verify(self):
+        rows = [call('exec', 'PRIVATE_JS', custom=True),
+                self.completed('FileChange', 'edit', '2026-09-10T10:00:01Z', status='completed',
+                               changes={'PRIVATE_PATH': {'type': 'update'}}),
+                self.completed('FileChange', 'rejected', '2026-09-10T10:00:01Z', status='declined', changes={}),
+                self.completed('CommandExecution', 'test', '2026-09-10T10:00:03Z', '2026-09-10T10:00:02Z',
+                               command=['/bin/bash', '-lc', 'pytest PRIVATE_ARGUMENT'], status='completed', exit_code=0),
+                self.completed('CommandExecution', 'denied', '2026-09-10T10:00:03Z', command='make', status='declined'),
+                record('response_item', {'type': 'custom_tool_call_output', 'call_id': 'call-1',
+                                         'output': 'PRIVATE_OUTPUT'}, '2026-09-10T10:00:04Z'),
+                self.completed('CommandExecution', 'background', '2026-09-10T10:05:00Z', '2026-09-10T10:00:03Z',
+                               command='bash scripts/fast_build.sh --release', status='failed', exit_code=2)]
+        self.codex(rows)
+        self.codex(rows, archive=True)
+        metrics = L.scan_codex(self.root)
+        visibility = L.observability(metrics)
+        coverage = L.verification_coverage(metrics)
+        self.assertEqual((metrics.tool_calls, metrics.edit_calls), (4, 1))
+        self.assertEqual((metrics.bash['test'], metrics.bash['build']), (1, 1))
+        self.assertEqual(visibility['structured_nested_tool_calls'], 3)
+        self.assertEqual(visibility['opaque_orchestrator_calls'], 1)
+        self.assertEqual((coverage['verification_passed'], coverage['verification_failed']), (1, 1))
+        self.assertEqual(coverage['final_edit_verification_failed_sessions'], 1)
+        self.assertNotIn('PRIVATE_', json.dumps([visibility, coverage, L.usage_breakdown(metrics)]))
+
+    def test_completed_item_mirrors_of_canonical_calls_count_once(self):
+        self.codex([self.completed('CommandExecution', 'direct', '2026-09-10T10:00:00Z', command='pytest',
+                                   status='completed', exit_code=0),
+                    self.completed('FileChange', 'patch', '2026-09-10T10:00:00Z', status='completed',
+                                   changes={'a': {}}),
+                    call('exec_command', {'cmd': 'pytest'}, 'direct'),
+                    record('response_item', {'type': 'function_call_output', 'call_id': 'direct',
+                                             'output': {'exit_code': 0}}),
+                    call('apply_patch', 'patch', 'patch', custom=True)])
+        metrics = L.scan_codex(self.root)
+        self.assertEqual((metrics.tool_calls, metrics.edit_calls), (2, 1))
+        self.assertEqual(metrics.diagnostics['structured_nested_tool_calls'], 0)
+        self.assertEqual(metrics.history.summary()['verification_calls'], 1)
+
+    def test_background_command_started_before_final_edit_does_not_verify_it(self):
+        self.codex([call('exec', 'js', custom=True),
+                    record('response_item', {'type': 'custom_tool_call_output', 'call_id': 'call-1',
+                                             'output': ''}, '2026-09-10T10:00:01Z'),
+                    call('exec', 'js', 'call-2', custom=True, ts='2026-09-10T10:01:00Z'),
+                    self.completed('FileChange', 'edit', '2026-09-10T10:01:01Z', status='completed',
+                                   changes={'a': {}}),
+                    record('response_item', {'type': 'custom_tool_call_output', 'call_id': 'call-2',
+                                             'output': ''}, '2026-09-10T10:01:02Z'),
+                    self.completed('CommandExecution', 'build', '2026-09-10T10:02:00Z', '2026-09-10T10:00:00.500Z',
+                                   command='make', status='completed', exit_code=0)])
+        coverage = L.verification_coverage(L.scan_codex(self.root))
+        self.assertEqual((coverage['edited_sessions'], coverage['any_edit_then_verify_sessions']), (1, 0))
+        self.assertEqual(coverage['final_edit_verified_sessions'], 0)
 
     def test_public_jsonl_started_completed_calls_results_and_usage(self):
         self.write('sessions/public.jsonl', [
@@ -580,7 +667,9 @@ class TestReports(TempCase):
             self.assertIn('id="panel-claude"', html.read_text())
             self.assertIn('id="panel-codex"', html.read_text())
             self.assertFalse(base.with_suffix('.txt').exists())
-            self.assertEqual(err.count('[ok] report written:'), 1)
+            self.assertEqual(err.count('[ok] report written:'), 0)
+            self.assertIn(f'[open in browser] {html.resolve().as_uri()}', err)
+            self.assertRegex(err.rstrip().splitlines()[-1], r'^\| Edit → verify sessions +\| +\d+ \| +\d+ \|$')
             self.assertNotRegex(err, r'[\u4e00-\u9fff]')
 
             rc, output, err = self.cli(args + ['--format', 'txt+html', '-o', 'custom/result.json'],
@@ -593,6 +682,25 @@ class TestReports(TempCase):
             self.assertIn(str(txt), err)
             self.assertIn(str(html), err)
             self.assertFalse(Path('custom/result.json').exists())
+
+    def test_key_metrics_table_lists_sources_with_separators(self):
+        def report(level, tools, opaque, edited, verified):
+            return {'current_level': level, 'observed': {'engineering_sessions': verified},
+                    'tool_observability': {'recognized_tool_calls': tools, 'opaque_orchestrator_calls': opaque},
+                    'verification_coverage': {'edited_sessions': edited}}
+        table = A.render_key_metrics({'combined': report(4, 9716, 1725, 25, 3),
+                                      'claude': report(4, 7941, 0, 25, 3),
+                                      'codex': report(1, 1775, 1725, 0, 0)})
+        self.assertEqual(table.splitlines(), [
+            '| Metric                     | Claude | Codex |',
+            '|----------------------------|-------:|------:|',
+            '| Level                      |     L4 |    L1 |',
+            '| Recognized tool calls      |  7,941 | 1,775 |',
+            '| Opaque orchestration calls |      0 | 1,725 |',
+            '| Sessions with edits        |     25 |     0 |',
+            '| Edit → verify sessions     |      3 |     0 |'])
+        self.assertIn('| Combined |', A.render_key_metrics({'combined': report(None, 0, 0, 0, 0)}))
+        self.assertIn('Unknown', A.render_key_metrics({'combined': report(None, 0, 0, 0, 0)}))
 
     def test_report_name_sets_title_and_default_filename(self):
         args = self.fixture()

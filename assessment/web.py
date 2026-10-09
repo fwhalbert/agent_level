@@ -198,7 +198,7 @@ def _panel(name, report):
            ('invalid_task_records', 'unreadable_task_records', 'oversized_task_records', 'invalid_task_stores')):
         p.append('<div class="callout warn">' + t(DISCOVERY_NOTE) + '</div>')
     if visibility.get('may_undercount_edits_and_verification'):
-        p.append('<div class="callout warn">' + t('Code orchestration calls {count} have no visible nested tool trace. This level reflects visible logs only and may undercount edits and verification. See task outcome assessment for Codex acceptance results.', count=visibility['opaque_orchestrator_calls']) + '</div>')
+        p.append('<div class="callout warn">' + t('Code orchestration calls {count} have no complete nested tool trace. This level reflects visible logs only and may undercount edits and verification. See task outcome assessment for Codex acceptance results.', count=visibility['opaque_orchestrator_calls']) + '</div>')
     p.extend(['<div class="metric-grid engineering">',
               _metric('Human inputs', _number(o['humanish_user']), 'Excludes system and subagent input'),
               _metric('Tool calls', _number(o['tool_calls']), '{ratio} calls / human input', ratio=f"{o['tool_per_human']:.2f}"),
@@ -395,7 +395,7 @@ def _anthropic_panel(report):
             '<p class="method">' + t(HISTORY_NOTE) + '</p></details>',
         ])
     if activity.get('opaque_orchestrator_calls'):
-        p.append('<div class="callout warn">' + t('Unexpanded orchestration calls {count}; internal verification is excluded from these counts. Zero recognized calls does not imply no verification.', count=activity['opaque_orchestrator_calls']) + '</div>')
+        p.append('<div class="callout warn">' + t('Unexpanded orchestration calls {count}; internal verification is counted only from typed completion records. Zero recognized calls does not imply no verification.', count=activity['opaque_orchestrator_calls']) + '</div>')
     p.append('<details class="card method"><summary>' + t('Scoring rules, limitations, and method source') + '</summary><ul>')
     p.extend('<li>' + t(note) + '</li>' for note in r['limitations'])
     p.append('</ul><a href="' + e(r['reference_url']) + '">' + t('Read Anthropic’s published evaluation method ↗') + '</a></details></div>')
