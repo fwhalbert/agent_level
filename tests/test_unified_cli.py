@@ -112,7 +112,8 @@ class TestUnifiedCLI(unittest.TestCase):
         self.assertNotIn('source ', out)
         self.assertNotIn('  cd ', out)
         instructions = (workspace / 'AGENTS.md').read_text()
-        self.assertIn(f'`{shlex.quote(str(environment / "bin/agent-level-record"))}`', instructions)
+        self.assertNotIn('## agent_level: installed commands', instructions)
+        self.assertNotIn(str(environment), instructions)
 
     def test_checkout_launcher_runs_without_package_installation(self):
         launcher = Path(__file__).resolve().parents[1] / 'agent-level'

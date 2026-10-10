@@ -38,8 +38,8 @@ class TestBootstrap(unittest.TestCase):
         self.assertTrue(first.startswith("## agent_level: automatic task evidence\n\n"
                                         "Read and follow the task evidence workflow in:\n"
                                         f"@{SOURCE / 'AGENTS.md'}\n"))
-        self.assertIn(f"- Recorder: `{self.venv / 'bin' / 'agent-level-record'}`", first)
-        self.assertIn('without activating a virtual environment', first)
+        self.assertNotIn("## agent_level: installed commands", first)
+        self.assertNotIn(str(self.venv), first)
         self.assertNotIn("agent_level_record.py start", first)
         self.assertNotIn("<!-- agent-level:task-evidence:start -->", first)
         self.assertEqual(first_claude, "@AGENTS.md\n")
@@ -131,8 +131,8 @@ class TestBootstrap(unittest.TestCase):
                                           "Read and follow the task evidence workflow in:\n"
                                           f"@{SOURCE / 'AGENTS.md'}\n"))
         self.assertTrue(content.endswith(after))
-        self.assertEqual(content.count('## agent_level: installed commands'), 1)
-        self.assertIn(str(self.venv / 'bin' / 'agent-level-record'), content)
+        self.assertNotIn('## agent_level: installed commands', content)
+        self.assertNotIn(str(self.venv), content)
         self.assertTrue(enabled(self.workspace))
         enable_workspace(self.workspace, self.venv, SOURCE)
         self.assertEqual(agents.read_text(), content)
@@ -186,7 +186,11 @@ class TestBootstrap(unittest.TestCase):
         agents = self.workspace / 'AGENTS.md'
         before = 'Keep this rule.\n\n'
         after = '\nKeep this too.\n\n## Project rules\nUse the project venv.\n'
-        agents.write_text(before + agents.read_text() + after)
+        commands = ("\n## agent_level: installed commands\n\n"
+                    "Use these commands without activating a virtual environment:\n"
+                    f"- Recorder: `{self.venv / 'bin' / 'agent-level-record'}` (append the workflow arguments).\n"
+                    f"- Report: `{self.venv / 'bin' / 'agent-level'} --project-dir {self.workspace}`.\n")
+        agents.write_text(before + agents.read_text() + commands + after)
         relocated = Path(self.temporary.name) / 'relocated'
         relocated.mkdir()
         (relocated / 'AGENTS.md').write_text((SOURCE / 'AGENTS.md').read_text())
@@ -200,9 +204,11 @@ class TestBootstrap(unittest.TestCase):
         self.assertTrue(content.endswith(after))
         self.assertIn(f'@{relocated / "AGENTS.md"}\n', content)
         self.assertNotIn(f'@{SOURCE / "AGENTS.md"}', content)
-        self.assertEqual(content.count('## agent_level: installed commands'), 1)
-        self.assertIn(str(venv / 'bin' / 'agent-level-record'), content)
-        self.assertNotIn(str(self.venv / 'bin' / 'agent-level-record'), content)
+        self.assertNotIn('## agent_level: installed commands', content)
+        self.assertNotIn(str(venv), content)
+        self.assertNotIn(str(self.venv), content)
+        enable_workspace(self.workspace, venv, relocated)
+        self.assertEqual(agents.read_text(), content)
         for config in (path, self.workspace / '.claude' / 'settings.json'):
             items = [item for entry in json.loads(config.read_text())['hooks']['SessionStart']
                      for item in entry['hooks']]

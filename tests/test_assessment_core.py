@@ -669,7 +669,10 @@ class TestReports(TempCase):
             self.assertFalse(base.with_suffix('.txt').exists())
             self.assertEqual(err.count('[ok] report written:'), 0)
             self.assertIn(f'[open in browser] {html.resolve().as_uri()}', err)
-            self.assertRegex(err.rstrip().splitlines()[-1], r'^\| Edit → verify sessions +\| +\d+ \| +\d+ \|$')
+            self.assertEqual(err.rstrip().splitlines()[-1], f'[open in browser] {html.resolve().as_uri()}')
+            self.assertRegex(err, r'\[progress\] Edit → verify sessions: Claude \d+; Codex \d+\n'
+                                 r'\[progress\] Generating HTML report')
+            self.assertNotIn('| Metric', err)
             self.assertNotRegex(err, r'[\u4e00-\u9fff]')
 
             rc, output, err = self.cli(args + ['--format', 'txt+html', '-o', 'custom/result.json'],
@@ -683,24 +686,21 @@ class TestReports(TempCase):
             self.assertIn(str(html), err)
             self.assertFalse(Path('custom/result.json').exists())
 
-    def test_key_metrics_table_lists_sources_with_separators(self):
+    def test_key_metrics_lists_sources_with_separators(self):
         def report(level, tools, opaque, edited, verified):
             return {'current_level': level, 'observed': {'engineering_sessions': verified},
                     'tool_observability': {'recognized_tool_calls': tools, 'opaque_orchestrator_calls': opaque},
                     'verification_coverage': {'edited_sessions': edited}}
-        table = A.render_key_metrics({'combined': report(4, 9716, 1725, 25, 3),
+        metrics = A.render_key_metrics({'combined': report(4, 9716, 1725, 25, 3),
                                       'claude': report(4, 7941, 0, 25, 3),
                                       'codex': report(1, 1775, 1725, 0, 0)})
-        self.assertEqual(table.splitlines(), [
-            '| Metric                     | Claude | Codex |',
-            '|----------------------------|-------:|------:|',
-            '| Level                      |     L4 |    L1 |',
-            '| Recognized tool calls      |  7,941 | 1,775 |',
-            '| Opaque orchestration calls |      0 | 1,725 |',
-            '| Sessions with edits        |     25 |     0 |',
-            '| Edit → verify sessions     |      3 |     0 |'])
-        self.assertIn('| Combined |', A.render_key_metrics({'combined': report(None, 0, 0, 0, 0)}))
-        self.assertIn('Unknown', A.render_key_metrics({'combined': report(None, 0, 0, 0, 0)}))
+        self.assertEqual(metrics.splitlines(), [
+            'Level: Claude L4; Codex L1',
+            'Recognized tool calls: Claude 7,941; Codex 1,775',
+            'Opaque orchestration calls: Claude 0; Codex 1,725',
+            'Sessions with edits: Claude 25; Codex 0',
+            'Edit → verify sessions: Claude 3; Codex 0'])
+        self.assertIn('Level: Combined Unknown', A.render_key_metrics({'combined': report(None, 0, 0, 0, 0)}))
 
     def test_report_name_sets_title_and_default_filename(self):
         args = self.fixture()

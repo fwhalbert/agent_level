@@ -40,7 +40,7 @@ def write_text(path, content):
             os.unlink(temporary)
 
 
-def enable_instructions(workspace, source, *, instructions=None, venv=None):
+def enable_instructions(workspace, source, *, instructions=None):
     instructions = instructions or source / "AGENTS.md"
     source_text = instructions.read_text(encoding="utf-8")
     start = source_text.find(INSTRUCTION_START)
@@ -48,10 +48,6 @@ def enable_instructions(workspace, source, *, instructions=None, venv=None):
     if start < 0 or end < 0:
         raise ValueError("task evidence section is missing from source AGENTS.md")
     section = f"{IMPORT_HEADER}@{instructions}\n"
-    if venv:
-        recorder = shlex.quote(str(venv / 'bin' / 'agent-level-record'))
-        report = report_command(workspace, venv)
-        section += COMMANDS_HEADER + f"- Recorder: `{recorder}` (append the workflow arguments).\n- Report: `{report}`.\n"
     agents = workspace / "AGENTS.md"
     if agents.is_symlink():
         raise ValueError(f"refusing to replace symlink: {agents}")
@@ -184,7 +180,7 @@ def enable_workspace(workspace, venv, source, *, instructions=None):
     if not workspace.is_dir() or not (instructions or source / "AGENTS.md").is_file():
         raise ValueError("workspace or task evidence instructions are missing")
     command = shlex.quote(str(venv / "bin" / "agent-level-session-notice"))
-    enable_instructions(workspace, source, instructions=instructions, venv=venv)
+    enable_instructions(workspace, source, instructions=instructions)
     enable_hook(workspace / ".codex" / "hooks.json", command)
     enable_hook(workspace / ".claude" / "settings.json", command)
     remove_generated_entrypoints(workspace)

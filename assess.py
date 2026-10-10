@@ -191,14 +191,9 @@ KEY_METRICS = (
 
 def render_key_metrics(reports):
     names = [name for name in reports if name != "combined"] or list(reports)
-    rows = [["Metric", *(name.capitalize() for name in names)]]
-    rows += [[label, *(value(reports[name]) for name in names)] for label, value in KEY_METRICS]
-    widths = [max(len(row[i]) for row in rows) for i in range(len(rows[0]))]
-    lines = ["| " + " | ".join(cell.ljust(widths[0]) if i == 0 else cell.rjust(widths[i])
-                               for i, cell in enumerate(row)) + " |" for row in rows]
-    lines.insert(1, "|" + "|".join("-" * (widths[0] + 2) if i == 0 else "-" * (width + 1) + ":"
-                                   for i, width in enumerate(widths)) + "|")
-    return "\n".join(lines)
+    return "\n".join(f"{label}: " + "; ".join(f"{name.capitalize()} {value(reports[name])}"
+                                             for name in names)
+                     for label, value in KEY_METRICS)
 
 
 def window_str(m: Metrics, since, until):
@@ -535,6 +530,8 @@ def main(argv=None, *, default_method='levels') -> int:
         result['self_improvement_evaluation'] = assess_improvement(
             eval_data, evidence_reader, metrics.sources, since, until)
         reports[name] = build_report(metrics, result, since, until, report_name, task_filters)
+    for line in render_key_metrics(reports).splitlines():
+        show_progress(line)
     download_stem = args.output.stem if args.output and args.output != Path("-") else stem
     bundle = {"version": VERSION, "ruleset_version": RULESET_VERSION,
               "view": args.view, "report_name": report_name,
@@ -573,7 +570,6 @@ def main(argv=None, *, default_method='levels') -> int:
     except OSError:
         print("[error] cannot write report", file=sys.stderr)
         return 2
-    print("\n" + render_key_metrics(reports), file=sys.stderr)
     return 0
 
 
