@@ -39,6 +39,13 @@ Supported nested output is an explicit `nested_tool_calls` array with call IDs,
 tool names, inputs, timestamps and optional returns; only
 `nested_tool_calls_complete: true` claims a complete expansion.
 
+Recorder verification includes `agent-level-record finish`, `agent-level record
+finish`, `python3 agent_level_record.py finish` and `python3 -m agent_level_record
+finish`, including supported shell wrappers. Help and `--unknown` invocations do
+not run acceptance and are excluded. Recorder exit code 2 is an unknown result,
+not an acceptance failure. Recognition changes affect historical coverage; compare
+both windows with the same analyzer before attributing a change to agent behavior.
+
 ## Token roles
 
 `model_usage.models` and `daily` retain the existing model breakdown. `roles` and
@@ -116,12 +123,26 @@ reason labels and outcomes. Display order does not identify a group.
 Reasons distinguish acceptance failure, timeout, interruption, launch failure,
 output limits and missing evidence. Requirement, environment and grader problems
 are human-review categories; they are not inferred from a failed exit code.
+`verification_unavailable` also labels a manually skipped acceptance attempt;
+it does not establish that a grader failed. Closing an interrupted `grading`
+attempt with `--unknown` defaults to `interruption`, unless `--reason` is supplied.
+For local collector records, reason labels come from the hash-checked journal;
+an unchecked label in `results.json` cannot override it. Missing or altered
+journals remain evidence problems rather than diagnosed environment failures.
 
 Resolve a task reference explicitly in the local workspace:
 
 ```bash
 agent-level record locate --workspace /absolute/path/to/workspace --task-ref task-REFERENCE
 ```
+
+Inspect that directory's `results.json`, `journal.json` and `check.log` when
+present. Check the frozen command, cwd, exit code, timeout and recorded error;
+resolve the actual missing dependency, executable, device or evidence before a
+new acceptance attempt. Use `finish --unknown ... --reason REASON` to close an
+unfinished attempt only when verification cannot be completed. Completed records
+are preserved: register and finish a new task after fixing the cause. Do not
+rewrite an old unknown as a pass or infer historical human interventions.
 
 Default reports omit raw task/session IDs, commands, criteria and record paths.
 Opaque references are pseudonymous identifiers, not a guarantee of anonymity.

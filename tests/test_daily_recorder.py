@@ -138,6 +138,20 @@ class TestDailyRecorder(TempCase):
         self.assertEqual(self.finish(directory, '--unknown', 'previous process interrupted')[0], 2)
         self.assertFalse((directory / 'check.log').exists())
         self.assertEqual(self.assessment()[0]['counts']['unknown_trials'], 1)
+        self.assertEqual(self.assessment()[0]['failure_reasons'], {'interruption': 1})
+        self.assertEqual(json.loads((directory / 'journal.json').read_text())['failure_reason'],
+                         'interruption')
+
+    def test_explicit_unknown_reason_overrides_interrupted_grading_default(self):
+        directory = self.start([sys.executable, '-c', 'raise Exception("must not run")'])
+        path = directory / 'results.json'
+        ledger = json.loads(path.read_text())
+        ledger['tasks'][0]['trials'][0]['status'] = 'grading'
+        path.write_text(json.dumps(ledger))
+        self.assertEqual(self.finish(directory, '--unknown', 'verification device lost',
+                                     '--reason', 'verification_unavailable')[0], 2)
+        self.assertEqual(self.assessment()[0]['failure_reasons'], {'verification_unavailable': 1})
+        self.assertFalse((directory / 'check.log').exists())
 
     def test_tampered_or_missing_output_is_unknown(self):
         directory = self.start([sys.executable, '-c', 'print("checked")'])
@@ -378,6 +392,22 @@ class TestDailyRecorder(TempCase):
         directory = self.start()
         self.assertEqual(self.finish(directory, '--unknown', 'device unavailable', '--reason', 'verification_unavailable')[0], 2)
         self.assertIn('verification_unavailable', self.assessment()[0]['failure_reasons'])
+
+    def test_unknown_reason_comes_from_hash_checked_journal(self):
+        directory = self.start()
+        self.assertEqual(self.finish(directory, '--unknown', 'acceptance interrupted',
+                                     '--reason', 'interruption')[0], 2)
+        path = directory / 'results.json'
+        ledger = json.loads(path.read_text())
+        ledger['tasks'][0]['trials'][0]['failure_reason'] = 'verification_unavailable'
+        path.write_text(json.dumps(ledger))
+        self.assertEqual(self.assessment()[0]['failure_reasons'], {'interruption': 1})
+        journal_path = directory / 'journal.json'
+        journal = json.loads(journal_path.read_text())
+        journal['failure_reason'] = 'verification_unavailable'
+        journal_path.write_text(json.dumps(journal))
+        self.assertEqual(self.assessment()[0]['failure_reasons'], {'evidence_verification_failed': 1})
+        self.assertEqual(self.assessment()[0]['counts']['unknown_trials'], 1)
 
     def test_seeded_review_plan_is_read_only_and_not_a_review(self):
         for _ in range(6):

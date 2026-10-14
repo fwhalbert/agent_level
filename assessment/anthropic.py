@@ -320,7 +320,10 @@ def assess(metrics, data=None, since=None, until=None, k=3, evidence_reader=None
                 passed, reason = None, registration_reason or 'acceptance_registration_invalid'
             elif trial.get('status') in ('running', 'grading', 'interrupted', 'error'):
                 code = trial.get('failure_reason')
-                if code in REASONS and code != 'acceptance_failed':
+                if (trial.get('transcript_kind') == 'collector_journal'
+                        and evidence_reader is not None and hasattr(evidence_reader, 'diagnose_incomplete')):
+                    reason = evidence_reader.diagnose_incomplete(trial)
+                elif code in REASONS and code != 'acceptance_failed':
                     reason = code
                 elif evidence_reader is not None and hasattr(evidence_reader, 'diagnose_incomplete'):
                     reason = evidence_reader.diagnose_incomplete(trial)

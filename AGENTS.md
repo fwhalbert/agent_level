@@ -33,13 +33,13 @@ agent-level-record start \
 
 Choose a command appropriate to the task; the example is not a universal check. Arguments after `--` are an argv list, run in `--repo` without a shell. If a check needs shell setup (such as activating the project's Python venv), explicitly use `-- bash -lc 'source /path/to/venv/bin/activate && ...'`. Only execute commands already authorized by the user task. When no meaningful executable check is available, omit the command and finish as unknown with the reason.
 
-When known, record standard provenance with `--criteria-version`, `--criteria-author`, `--criteria-review-source`, `--criteria-reviewer` and `--criteria-review-ref`; otherwise retain `unknown`. Add explicit `--session-id` values only when available. New registrations freeze the acceptance plan locally; do not edit it to make acceptance pass. Existing authorized templates do not require asking for approval again. Human reviews must come from actual human input, recorded separately with `agent-level-record review`; never invent a human verdict or intervention count. See [workflow metrics and review](docs/WORKFLOW_METRICS.md).
+When known, record standard provenance with `--criteria-version`, `--criteria-author`, `--criteria-review-source`, `--criteria-reviewer` and `--criteria-review-ref`; otherwise retain `unknown`. If the current agent writes the criteria, record its known identity as the author and use `--criteria-review-source self`; this does not establish human or independent review. Add explicit `--session-id` values only when available. New registrations freeze the acceptance plan locally; do not edit it to make acceptance pass. Existing authorized templates do not require asking for approval again. Human reviews must come from actual human input, recorded separately with `agent-level-record review`; never invent a human verdict or intervention count. See [workflow metrics and review](docs/WORKFLOW_METRICS.md).
 
 For older records with no `reasoning_effort` field, reports use a documented official model default where one is known; this is an assumed setting, not proof of the historical runtime configuration. An explicit `unknown` stays unknown. Filter task results with `agent-level-assess --model MODEL --effort LEVEL`; these filters do not change the L0–L7 historical-log assessment.
 
 ## Finish before the final reply
 
-After implementation, run the registered acceptance check through the recorder; this is the validation run, so a separate duplicate run is unnecessary:
+For both Codex and Claude, after the final code or test edit and before the final reply, run the registered acceptance check through the recorder and inspect its result. An earlier passing check does not validate a later edit. This is the validation run, so a separate duplicate run is unnecessary. If further edits follow a completed acceptance attempt, register a new task before those edits and finish it afterward; retain the earlier result:
 
 ```bash
 agent-level-record finish \
@@ -52,6 +52,8 @@ For unavailable verification, cancellation, blocked hardware, or incomplete work
 agent-level-record finish \
   --task-dir /absolute/path/printed/by/start --unknown 'Specific reason verification was not completed'
 ```
+
+Use `--unknown` only when verification cannot be completed, not to skip an available check. Inspect the local journal and command log before diagnosing the cause. Use `--reason timeout`, `interruption`, `launch_failure`, `output_limit`, `evidence_missing` or `verification_unavailable` when supported by the evidence. Without an explicit reason, closing an interrupted `grading` attempt records `interruption`; other skipped attempts record `verification_unavailable`. That label alone does not establish a grader or environment defect. State any verification limitation in the final reply.
 
 The finish command writes a command log, collector journal, SHA-256-linked grader evidence and outcome, then atomically publishes `results.json`. Captured output is bounded to 16 MiB; exceeding the limit terminates the acceptance process group and records unknown. Local verification checks the journal's output hash and agreement with the grader verdict. Exit codes: `0` acceptance passed, `1` acceptance failed, `2` unknown or recording error. Timeout, launch failure, and interruption cannot become a pass. An abruptly stopped task remains running/grading and is counted as unknown; a grading task can be closed with `--unknown` without rerunning its command. Completed tasks are not overwritten; a later acceptance attempt needs a new task, retaining the earlier result.
 

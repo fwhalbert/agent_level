@@ -64,6 +64,22 @@ class TestWorkflowReporting(TempCase):
             self.assertNotIn('PRIVATE_', output)
         self.assertIn('unobserved calls are not zero calls', A.render_report(report))
 
+    def test_source_recorder_finish_counts_after_final_edit(self):
+        report = self.report([
+            call('apply_patch', 'PRIVATE_PATCH', 'edit', custom=True),
+            call('exec_command', {'cmd': 'python3 agent_level_record.py finish --task-dir /t'},
+                 'verify', ts='2026-09-10T10:01:00Z'),
+            record('response_item', {'type': 'function_call_output', 'call_id': 'verify',
+                                    'output': {'exit_code': 0}}, '2026-09-10T10:01:30Z'),
+            call('exec_command', {'cmd': 'agent-level-record finish --help'},
+                 'help', ts='2026-09-10T10:02:00Z'),
+        ])
+        coverage = report['verification_coverage']
+        self.assertEqual(coverage['verification_attempts'], 1)
+        self.assertEqual(coverage['final_edit_verified_sessions'], 1)
+        self.assertEqual(coverage['final_edit_verification_passed_sessions'], 1)
+        self.assertEqual(coverage['final_edit_verification_coverage'], 1)
+
     def test_role_totals_include_cache_without_double_counting_reasoning(self):
         report = self.report([tokens(100, cached=80, out=10)])
         roles = report['model_usage']['roles']

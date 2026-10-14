@@ -168,7 +168,8 @@ def finish(args):
         if task.get('acceptance_registration'):
             journal['registration_sha256'] = task['acceptance_registration']['evidence_sha256']
         exit_code, timed_out, error = None, False, args.unknown
-        reason = args.reason if args.unknown else None
+        reason = (args.reason or ('interruption' if trial['status'] == 'grading'
+                                  else 'verification_unavailable')) if args.unknown else None
         started = time.monotonic()
         if args.unknown:
             trial['status'] = 'interrupted'
@@ -340,7 +341,7 @@ def main(argv=None):
     end.add_argument('--unknown', metavar='REASON', help='close without grading when verification is unavailable')
     end.add_argument('--reason', choices=('timeout', 'interruption', 'launch_failure', 'output_limit',
                                          'evidence_missing', 'verification_unavailable'),
-                     default='verification_unavailable', help='normalized reason used with --unknown')
+                     help='reason used with --unknown (default: interruption for grading, otherwise verification_unavailable)')
     audit = commands.add_parser('review', help='append a declared human review without changing the acceptance verdict')
     audit.add_argument('--task-dir', type=Path, required=True)
     audit.add_argument('--review-file', type=Path, required=True)

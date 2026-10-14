@@ -29,8 +29,7 @@ BASH_CATEGORIES = [
                  # Direct execution of local test binaries or scripts: ./test_x, ./build/bin/foo_test, ./run_tests.sh
                  r"|^(\./|\.\./|/)\S*(^|[/_-])?test[\w.-]*\b"
                  r"|^\./?run_tests?\b"
-                 r"|^(\S*/)?[\w.-]*(?<![A-Za-z])(tests?|check)(?![A-Za-z])[\w.-]*\.(sh|py)\b"
-                 r"|^(\S*/)?agent-level(-record|\s+record)\s+finish\b(?!.*\s--unknown\b)"),
+                 r"|^(\S*/)?[\w.-]*(?<![A-Za-z])(tests?|check)(?![A-Za-z])[\w.-]*\.(sh|py)\b"),
     ("build", 75, r"^(make|cmake|ninja|bazel|meson|gcc|g\+\+|clang|clang\+\+|cc|ld|tsc|webpack|vite|esbuild|rollup)\b"
                   r"|^(cargo|go|dotnet|mvn|gradle|swift)\s+build\b"
                   r"|^(npm|pnpm|yarn|bun)\s+(run\s+)?build\b"
@@ -48,7 +47,6 @@ BASH_CATEGORY_ORDER = ["search", "read", "build", "test", "git", "python",
                        "node", "docker", "ssh", "pr", "ci", "other"]
 
 _COMPILED_BASH = [(name, prio, re.compile(pat)) for name, prio, pat in BASH_CATEGORIES]
-RECORDER_FINISH_RE = re.compile(r"\bagent-level(-record|\s+record)\s+finish\b")
 VERIFICATION_CATEGORIES = {"build", "test"}
 PATH_EXECUTABLES = {
     'bash', 'sh', 'zsh', 'pytest', 'tox', 'nose2', 'jest', 'vitest', 'mocha', 'ctest',
@@ -136,25 +134,56 @@ def _unwrap(tokens):
     return tokens, None
 
 
-def classify_bash(command: str, _depth=0) -> str:
-    """Classify literal shell commands, never execute them. Unparsed input is other."""
+def _recorder_finish(tokens):
+    if re.fullmatch(r'python[0-9.]*', tokens[0]):
+        tokens = tokens[1:]
+        if tokens[:2] == ['-m', 'agent_level_record']:
+            tokens = ['agent-level-record', *tokens[2:]]
+        elif tokens and Path(tokens[0]).name == 'agent_level_record.py':
+            tokens = ['agent-level-record', *tokens[1:]]
+    if not tokens:
+        return None
+    name = Path(tokens[0]).name
+    if name == 'agent-level-record':
+        args = tokens[1:]
+    elif name == 'agent-level' and tokens[1:2] == ['record']:
+        args = tokens[2:]
+    else:
+        return None
+    for arg in args[1:]:
+        option = arg.split('=', 1)[0]
+        if option == '-h' or (option.startswith('--') and len(option) > 2
+                             and ('--help'.startswith(option) or '--unknown'.startswith(option))):
+            return False
+    return args[:1] == ['finish']
+
+
+def _classify_bash(command, _depth=0):
     if not isinstance(command, str) or not command or _depth > 3:
-        return "other"
-    best_name, best_prio = "other", -1
+        return "other", False
+    best_name, best_prio, recorder = "other", -1, False
     priorities = dict((name, prio) for name, prio, _ in _COMPILED_BASH)
     try:
         segments = list(_shell_segments(command))
     except ValueError:
-        return "other"
+        return "other", False
     for tokens in segments:
         tokens, nested = _unwrap(tokens)
         if not tokens or tokens[0] == "cd":
             continue
         if nested is not None:
-            name = classify_bash(nested, _depth + 1)
+            name, nested_recorder = _classify_bash(nested, _depth + 1)
+            recorder = recorder or nested_recorder
             prio = priorities.get(name, -1)
             if prio > best_prio:
                 best_name, best_prio = name, prio
+            continue
+        finish = _recorder_finish(tokens)
+        if finish is not None:
+            if finish:
+                recorder = True
+                if priorities['test'] > best_prio:
+                    best_name, best_prio = 'test', priorities['test']
             continue
         # Match only the command and its arguments; separators inside quoted tokens stay data.
         sub = " ".join(tokens)
@@ -163,7 +192,12 @@ def classify_bash(command: str, _depth=0) -> str:
                 if prio > best_prio:
                     best_name, best_prio = name, prio
                 break
-    return best_name
+    return best_name, recorder
+
+
+def classify_bash(command: str, _depth=0) -> str:
+    """Classify literal shell commands, never execute them. Unparsed input is other."""
+    return _classify_bash(command, _depth)[0]
 
 
 # IDE, CLI, and system wrappers are not human inputs.
@@ -429,12 +463,12 @@ def _tool(m, name, inp, sid, sidechain, ts=None, call_id=None):
         cmd = inp.get('command', inp.get('cmd', '')) if isinstance(inp, dict) else ''
         if isinstance(cmd, list) and all(isinstance(v, str) for v in cmd):
             cmd = shlex.join(cmd)
-        category = classify_bash(cmd)
+        category, recorder = _classify_bash(cmd)
         m.bash[category] += 1
         if category in VERIFICATION_CATEGORIES:
             key = (sid, call_id) if isinstance(call_id, str) and call_id else (sid, m._event_sequence)
             m._verification_events[key] = (order, category)
-            m.history.call(sid, call_id, RECORDER_FINISH_RE.search(cmd) is not None)
+            m.history.call(sid, call_id, recorder)
         edited_at = m._edited_sessions.get(sid)
         if category in VERIFICATION_CATEGORIES and edited_at is not None and ts is not None and ts >= edited_at:
             m.engineering_sessions.add(sid)

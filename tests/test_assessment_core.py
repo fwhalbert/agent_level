@@ -233,14 +233,25 @@ class TestVerificationCoverage(TempCase):
 
     def test_recorder_finish_exit_two_is_unknown_not_failed(self):
         rows = []
-        for cid, code in (('passed', 0), ('failed', 1), ('unknown', 2)):
-            rows += [call('exec_command', {'cmd': '.venv/bin/agent-level-record finish --task-dir /t'}, cid),
-                     self.output(cid, code)]
+        commands = ('.venv/bin/agent-level-record', './agent-level record',
+                    'python3 agent_level_record.py', '/venv/bin/python3 -m agent_level_record')
+        for index, command in enumerate(commands):
+            for result, code in (('passed', 0), ('failed', 1), ('unknown', 2)):
+                cid = f'{index}-{result}'
+                rows += [call('exec_command', {'cmd': command + ' finish --task-dir /t'}, cid),
+                         self.output(cid, code)]
         rows.append(call('exec_command', {'cmd': 'agent-level-record finish --task-dir /t --unknown blocked'}, 'skipped'))
         self.codex(rows)
         summary = L.scan_codex(self.root).history.summary()
         self.assertEqual((summary['verification_calls'], summary['verification_passed'],
-                          summary['verification_failed'], summary['verification_unknown']), (3, 1, 1, 1))
+                          summary['verification_failed'], summary['verification_unknown']), (12, 4, 4, 4))
+
+    def test_recorder_text_in_test_arguments_does_not_change_exit_two(self):
+        self.codex([call('exec_command', {'cmd': 'pytest -k "agent-level-record finish"'}, 'test'),
+                    self.output('test', 2)])
+        summary = L.scan_codex(self.root).history.summary()
+        self.assertEqual(summary['verification_failed'], 1)
+        self.assertEqual(summary['verification_unknown'], 0)
 
     def test_claude_recorder_exit_code_comes_from_error_result(self):
         rows = []
@@ -492,6 +503,24 @@ class TestRobustness(TempCase):
                                   ('bash -lc "pytest -q"', 'test')]:
             with self.subTest(command=command):
                 self.assertEqual(L.classify_bash(command), expected)
+
+    def test_recorder_entrypoints_and_nonexecuting_options(self):
+        for entrypoint in ('agent-level-record', '/venv/bin/agent-level-record',
+                           './agent-level record', 'python3 agent_level_record.py',
+                           'python3 /source/agent_level_record.py', 'python3 -m agent_level_record'):
+            for suffix, expected in (('finish --task-dir /t', 'test'),
+                                     ('finish --help', 'other'), ('finish -h', 'other'),
+                                     ('finish --hel', 'other'),
+                                     ('finish --task-dir /t --unknown blocked', 'other'),
+                                     ('finish --task-dir /t --unknown=blocked', 'other'),
+                                     ('finish --task-dir /t --unk=blocked', 'other'),
+                                     ('start --criteria test -- pytest', 'other')):
+                command = entrypoint + ' ' + suffix
+                with self.subTest(command=command):
+                    self.assertEqual(L.classify_bash(command), expected)
+        self.assertEqual(L.classify_bash(
+            'bash -lc "uv run python3 -m agent_level_record finish --task-dir /t"'), 'test')
+        self.assertEqual(L.classify_bash('echo "python3 agent_level_record.py finish"'), 'read')
 
     def test_git_pr_ci_are_not_test_verification(self):
         self.write('projects/a.jsonl', [assistant(tools=[('Bash', {'command': 'git status'}),
