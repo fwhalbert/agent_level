@@ -19,7 +19,7 @@ def main(argv=None):
     commands.add_parser('assess', help='Analyze local activity and generate an offline report')
     commands.add_parser('record', help='Register acceptance, record human review, or locate task evidence')
     commands.add_parser('compare', help='Open the existing before/after evidence comparison view')
-    commands.add_parser('setup', help='Install if needed and enable task recording in one step')
+    commands.add_parser('setup', help='Reference this checkout in Codex global instructions')
     if args and args[0] in ('-h', '--help', '--version'):
         parser.parse_args(args)
         return 0

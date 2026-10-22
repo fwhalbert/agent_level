@@ -7,18 +7,17 @@ that describes the behavior and evidence. This project is licensed under the
 
 ## Development
 
-Run the source tests from the repository root with Python 3.10+ and Git:
+Run the source tests from the repository root with Python 3.9+ and Git:
 
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m unittest discover -v
+python3 -m unittest discover -v
 ```
 
 Runtime code and tests use the Python standard library. Source tests run directly
 from the checkout without installing the package or downloading build dependencies.
-CI covers Python 3.10–3.13. The suite checks source behavior; it does not verify
-package installation or built wheels.
+CI covers Python 3.9–3.13 on Linux and macOS. It runs the source suite and checks
+global setup and direct source commands with temporary configuration and project
+paths containing spaces. It does not verify package installation or built wheels.
 
 ## Evidence and review
 

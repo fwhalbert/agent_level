@@ -9,10 +9,10 @@ This repository compares a workflow before and after an agent changes a prompt, 
 3. The agent's failure analysis, proposed change, and rollback procedure are retained as files. The evaluator stores these with the plan and raw trial evidence, then exports the existing schema 1.1 `tasks` records. The evaluator should review whether the change was actually proposed by the agent and applied before candidate runs; file hashes alone cannot establish authorship or chronology.
 4. Run the read-only assessment below. Re-run the comparison on a later frozen suite to check that gains persist. Report every attempted candidate; selecting only the best comparison invalidates the stated significance level.
 
-Install and activate the workspace venv as shown in the [quick start](../README.md#quick-start), then run:
+Use the source checkout from the [quick start](../README.md#quick-start), then run:
 
 ```bash
-agent-level-assess --source codex --eval-results paired-results.json \
+python3 /absolute/path/to/agent_level/assess.py --source codex --eval-results paired-results.json \
   --evidence-root ./paired-evidence --format txt+html
 ```
 

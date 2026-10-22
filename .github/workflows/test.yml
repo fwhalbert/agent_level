@@ -9,13 +9,14 @@ permissions:
 
 jobs:
   test:
-    name: Python ${{ matrix.python-version }}
-    runs-on: ubuntu-latest
+    name: ${{ matrix.os }} / Python ${{ matrix.python-version }}
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
+        os: [ubuntu-latest, macos-latest]
+        python-version: ['3.9', '3.10', '3.11', '3.12', '3.13']
     steps:
       - uses: actions/checkout@v7
         with:
@@ -25,3 +26,16 @@ jobs:
           python-version: ${{ matrix.python-version }}
       - name: Run source tests
         run: python -m unittest discover -v
+      - name: Check global setup and direct source commands
+        run: |
+          workspace="$RUNNER_TEMP/agent-level smoke"
+          config_dir="$RUNNER_TEMP/codex config"
+          mkdir -p "$workspace"
+          ./agent-level setup --codex-home "$config_dir"
+          ./agent-level --version
+          ./agent-level record --help
+          ./agent-level --project-dir "$workspace" --claude-dir "$workspace/no-claude" --codex-dir "$workspace/no-codex"
+          test -f "$config_dir/AGENTS.md"
+          test ! -e "$workspace/.venv"
+          test ! -e "$workspace/AGENTS.md"
+          test ! -e "$workspace/.codex"

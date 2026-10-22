@@ -24,32 +24,36 @@ They contain aggregates and opaque diagnostic references, not raw conversations 
 
 ## Quick start
 
-Requires Git and Python 3.10+; no third-party runtime dependencies.
-From a checkout, run one setup command in bash/zsh on Linux or macOS,
-replacing the project path with the project you want to assess:
+Requires Git and Python 3.9+ on Linux or macOS; no third-party runtime dependencies.
+Clone the source and configure Codex once:
 
 ```bash
 git clone https://github.com/fwhalbert/agent_level.git
 cd agent_level
-./agent-level setup --project-dir /absolute/path/to/your-project
+./agent-level setup
 ```
 
-Setup creates or reuses a venv, installs the commands, links task recording
-instructions in `AGENTS.md` and `CLAUDE.md`, and configures session notice hooks.
-It prints a report command you can run from any directory without activating
-the venv. The workspace instructions also include the recorder's absolute command.
-If Agent Level is already installed, use `agent-level setup` in your project.
-Run the printed report command, then open its `file://` link; the default report is
-`out/agent_level/YYYY-MM-DD/agent-level.html`.
+Setup adds an absolute reference to this checkout's `AGENTS.md` in
+`~/.codex/AGENTS.md`, preserving your personal rules. It does not install packages,
+create virtual environments, configure hooks, or write project configuration.
+Use `--codex-home /path/to/codex-home` or `CODEX_HOME` for another global location.
 
-Start a new Claude Code or Codex session and assign an engineering task.
-The agent records acceptance checks and results through the [recording workflow](AGENTS.md).
-The hook only displays “Auto eval enabled.”; new Codex hooks require trust in `/hooks`.
-Run the printed report command after tasks finish to update the report.
+Start a new Codex session. Agents follow the referenced [recording workflow](AGENTS.md)
+and run the recorder directly from this checkout. Evidence remains in the workspace
+being evaluated. To generate a report from any directory:
 
-Keep the tool checkout available; rerun setup after moving it or changing the venv.
-For analyzer-only installation and more options, see [setup](docs/SETUP.md)
-or run `agent-level --help`.
+```bash
+python3 /absolute/path/to/agent_level/agent-level --project-dir "/absolute/path/to/your project"
+```
+
+Open the printed `file://` link; the default report is
+`out/agent_level/YYYY-MM-DD/agent-level.html` under the selected project.
+Run the report again after tasks finish to update it.
+
+On macOS, Python 3.9 from Apple's Command Line Tools is supported. Quote paths
+containing spaces. Keep this checkout available and rerun setup after moving it.
+For analyzer-only usage, Claude Code configuration, and migration from project
+installations, see [setup](docs/SETUP.md) or run `./agent-level --help`.
 
 ## L0–L7 framework
 

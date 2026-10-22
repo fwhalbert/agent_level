@@ -9,7 +9,7 @@ description = "Agent Level: measure AI engineering workflow autonomy from local 
 readme = "README.md"
 license = {file = "LICENSE"}
 classifiers = ["License :: OSI Approved :: MIT License"]
-requires-python = ">=3.10"
+requires-python = ">=3.9"
 dependencies = []
 keywords = ["ai-agents", "claude-code", "codex", "evaluation", "software-engineering"]
 

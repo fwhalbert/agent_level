@@ -34,7 +34,7 @@ The evaluator is read-only and never executes commands from imported files. Evid
 
 ## Existing sessions and daily activity
 
-Install and activate the workspace venv as shown in the [quick start](../README.md#quick-start). The examples below use `agent-level-assess` from that environment.
+Use the source checkout as shown in the [quick start](../README.md#quick-start). In the examples below, replace `agent-level-assess` with `python3 /absolute/path/to/agent_level/assess.py`; no project installation is needed.
 
 To review existing Claude/Codex work without defining new tasks:
 

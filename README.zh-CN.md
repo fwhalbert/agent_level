@@ -24,29 +24,33 @@ Agent Level 基于 **Claude Code 和 Codex** 的本地活动与任务证据，
 
 ## 快速开始
 
-需要 Git 和 Python 3.10+，运行时无第三方依赖。
-在 Linux / macOS 的 bash 或 zsh 中，从源码目录运行一条 setup 命令，
-将项目路径改为要评估的项目的绝对路径：
+需要 Git 和 Python 3.9+，支持 Linux / macOS，运行时无第三方依赖。
+克隆源码后，为 Codex 执行一次全局配置：
 
 ```bash
 git clone https://github.com/fwhalbert/agent_level.git
 cd agent_level
-./agent-level setup --project-dir /absolute/path/to/your-project
+./agent-level setup
 ```
 
-Setup 自动创建或复用虚拟环境、安装命令，在 `AGENTS.md`、`CLAUDE.md` 中引用任务记录指令，
-并配置会话提示 hook。完成后会打印可在任意目录直接运行的报告命令，无需激活虚拟环境；
-项目指令中也会写入 recorder 的完整命令路径。已安装工具时，可在项目中运行 `agent-level setup`。
-运行 setup 打印的报告命令，再在浏览器打开输出的 `file://` 链接，默认报告路径为
-`out/agent_level/YYYY-MM-DD/agent-level.html`。
+Setup 在 `~/.codex/AGENTS.md` 中添加指向本仓库 `AGENTS.md` 的绝对路径引用，
+保留已有个人规则。不安装包、不创建虚拟环境、不配置 hook，也不写入项目配置。
+可通过 `--codex-home /path/to/codex-home` 或 `CODEX_HOME` 指定其他全局配置目录。
 
-在目标项目开启新的 Claude Code 或 Codex 会话，照常交给它工程任务。
-Agent 按[记录流程](AGENTS.md)登记验收检查并记录结果。
-hook 只显示 “Auto eval enabled.”；Codex 的新 hook 需要先在 `/hooks` 中信任。
-任务完成后，运行 setup 打印的报告命令更新报告。
+开启新的 Codex 会话后，Agent 按引用的[记录流程](AGENTS.md)直接调用本仓库的记录器，
+验收证据仍保存在被评估的工作区。可从任意目录生成报告：
 
-请保留本工具源码目录，移动目录或更换虚拟环境后重新运行 setup。
-仅安装分析器及更多选项见[配置指南](docs/SETUP.md)，或运行 `agent-level --help`。
+```bash
+python3 /absolute/path/to/agent_level/agent-level --project-dir "/absolute/path/to/your project"
+```
+
+在浏览器打开输出的 `file://` 链接；报告默认保存在所选项目的
+`out/agent_level/YYYY-MM-DD/agent-level.html`。任务完成后重新运行命令更新报告。
+
+macOS 支持 Apple Command Line Tools 提供的 Python 3.9，路径含空格时加引号。
+请保留本工具源码目录，移动后重新运行 setup。
+仅分析用法、Claude Code 配置和旧项目安装迁移见[配置指南](docs/SETUP.md)，
+或运行 `./agent-level --help`。
 
 ## L0–L7 框架
 
