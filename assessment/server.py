@@ -3,6 +3,7 @@ import socket
 import sys
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from socketserver import TCPServer
 from urllib.parse import quote, unquote, urlsplit
 
 
@@ -27,6 +28,12 @@ def browser_host(host):
     return '127.0.0.1'
 
 
+class ReportServer(ThreadingHTTPServer):
+    def server_bind(self):
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 class ReportHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, report, **kwargs):
         self.report = report
@@ -44,7 +51,7 @@ class ReportHandler(SimpleHTTPRequestHandler):
 
 def serve_report(report, host='0.0.0.0', port=8000):
     handler = partial(ReportHandler, report=report.resolve())
-    with ThreadingHTTPServer((host, port), handler) as server:
+    with ReportServer((host, port), handler) as server:
         address = browser_host(host)
         url = f'http://{address}:{server.server_port}/{quote(report.name)}'
         print(f'[progress] Serving report on {host}:{server.server_port}; press Ctrl+C to stop',

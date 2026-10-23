@@ -119,7 +119,7 @@ class TestReportServer(TempCase):
 
     def test_server_announces_intranet_address_and_actual_port(self):
         report = self.root / 'report.html'
-        with patch.object(server, 'ThreadingHTTPServer') as factory, \
+        with patch.object(server, 'ReportServer') as factory, \
                 patch.object(server, 'browser_host', return_value='192.168.1.12'), \
                 contextlib.redirect_stderr(io.StringIO()) as error:
             instance = factory.return_value.__enter__.return_value
@@ -128,3 +128,11 @@ class TestReportServer(TempCase):
             server.serve_report(report, port=0)
         self.assertIn('[open in browser] http://192.168.1.12:8123/report.html', error.getvalue())
         factory.return_value.__exit__.assert_called_once()
+
+    def test_server_startup_does_not_require_reverse_dns(self):
+        report = self.root / 'report.html'
+        with patch.object(server.socket, 'getfqdn', side_effect=AssertionError('reverse DNS lookup')), \
+                patch.object(server.ReportServer, 'serve_forever', side_effect=KeyboardInterrupt), \
+                contextlib.redirect_stderr(io.StringIO()) as error:
+            server.serve_report(report, host='127.0.0.1', port=0)
+        self.assertRegex(error.getvalue(), r'\[open in browser\] http://127\.0\.0\.1:[1-9]\d*/report.html')
