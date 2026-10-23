@@ -50,6 +50,18 @@ Open the printed `file://` link; the default report is
 `out/agent_level/YYYY-MM-DD/agent-level.html` under the selected project.
 Run the report again after tasks finish to update it.
 
+For access from another device on your intranet, add `--serve`:
+
+```bash
+python3 /absolute/path/to/agent_level/agent-level --project-dir "/absolute/path/to/your project" --serve
+```
+
+Open the printed `http://<intranet-ip>:8000/...` link. The server listens on all
+IPv4 interfaces and serves only the HTML report. Keep the command running; press
+Ctrl+C to stop. Use `--port 8080` for another port or `--host 127.0.0.1` for local
+access. If the machine has multiple network interfaces, use its reachable intranet
+IP in the URL. The selected port must be reachable from the other device.
+
 On macOS, Python 3.9 from Apple's Command Line Tools is supported. Quote paths
 containing spaces. Keep this checkout available and rerun setup after moving it.
 For analyzer-only usage, Claude Code configuration, and migration from project

@@ -47,6 +47,17 @@ python3 /absolute/path/to/agent_level/agent-level --project-dir "/absolute/path/
 在浏览器打开输出的 `file://` 链接；报告默认保存在所选项目的
 `out/agent_level/YYYY-MM-DD/agent-level.html`。任务完成后重新运行命令更新报告。
 
+需要从内网其他设备访问时，加上 `--serve`：
+
+```bash
+python3 /absolute/path/to/agent_level/agent-level --project-dir "/absolute/path/to/your project" --serve
+```
+
+打开输出的 `http://<内网IP>:8000/...` 链接。服务默认监听所有 IPv4 网卡，
+仅提供生成的 HTML 报告。保持命令运行，按 Ctrl+C 停止；可用 `--port 8080`
+更换端口，或用 `--host 127.0.0.1` 限制为本机访问。多网卡机器可将链接中的 IP
+替换为其他设备能访问的内网 IP，所选端口需能从该设备连通。
+
 macOS 支持 Apple Command Line Tools 提供的 Python 3.9，路径含空格时加引号。
 请保留本工具源码目录，移动后重新运行 setup。
 仅分析用法、Claude Code 配置和旧项目安装迁移见[配置指南](docs/SETUP.md)，

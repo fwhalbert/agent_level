@@ -80,3 +80,9 @@ Use `--source claude|codex|all`, `--since`, `--until`, `--days`, and
 `--format html|txt|md|json|txt+html` to select data and output. `--output -` writes
 one format to stdout; progress goes to stderr. `--report-name` overrides the title
 and default filename. The analyzer never executes commands found in logs.
+
+Add `--serve` to serve a file-based HTML report over HTTP and print an intranet
+browser URL. The command stays running until Ctrl+C. Defaults are `--host 0.0.0.0`
+and `--port 8000`; use `--host 127.0.0.1` for local access or `--port 0` to select
+a free port. Only the generated HTML file is served. `--serve` requires `html`
+or `txt+html` output and cannot be combined with `--output -`.

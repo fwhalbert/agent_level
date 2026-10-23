@@ -427,6 +427,12 @@ def build_parser():
                    help="Report title and, without -o, the output filename")
     p.add_argument("--output", "-o", type=Path,
                    help="Output path; default out/agent_level/YYYY-MM-DD/<report-name>.<format> (local date); dual format replaces suffix; - writes one format to stdout")
+    p.add_argument("--serve", action="store_true",
+                   help="Serve the HTML report over HTTP until Ctrl+C; prints an intranet browser URL")
+    p.add_argument("--host", default="0.0.0.0",
+                   help="HTTP server IPv4 bind address with --serve (default: 0.0.0.0, all interfaces)")
+    p.add_argument("--port", type=int, default=8000,
+                   help="HTTP server port with --serve (default: 8000; 0 selects a free port)")
     p.add_argument("--since", metavar="YYYY-MM-DD", help="First UTC date, inclusive")
     p.add_argument("--until", metavar="YYYY-MM-DD", help="Last UTC date, inclusive")
     p.add_argument("--days", type=int, metavar="N", help="Last N UTC calendar days, including today")
@@ -446,6 +452,12 @@ def main(argv=None, *, default_method='levels') -> int:
     )
     if args.output == Path("-") and len(formats) > 1:
         print("[error] stdout requires a single --format (txt, html, md or json)", file=sys.stderr)
+        return 2
+    if args.serve and ("html" not in formats or args.output == Path("-")):
+        print("[error] --serve requires an HTML report written to a file", file=sys.stderr)
+        return 2
+    if args.serve and not 0 <= args.port <= 65535:
+        print("[error] --port must be between 0 and 65535", file=sys.stderr)
         return 2
     since = until = None
     try:
@@ -544,6 +556,7 @@ def main(argv=None, *, default_method='levels') -> int:
     output_base = args.output or (
         Path("out") / "agent_level" / datetime.now().strftime("%Y-%m-%d") / stem
     )
+    html_path = None
     try:
         for fmt in formats:
             show_progress(f"Generating {fmt.upper()} report…")
@@ -564,12 +577,23 @@ def main(argv=None, *, default_method='levels') -> int:
             output_path.write_text(out + "\n", encoding="utf-8")
             absolute_path = output_path.resolve()
             if fmt == "html":
-                print(f"[open in browser] {absolute_path.as_uri()}", file=sys.stderr)
+                html_path = absolute_path
+                if args.serve:
+                    print(f"[ok] report written: {absolute_path}", file=sys.stderr)
+                else:
+                    print(f"[open in browser] {absolute_path.as_uri()}", file=sys.stderr)
             else:
                 print(f"[ok] report written: {absolute_path}", file=sys.stderr)
     except OSError:
         print("[error] cannot write report", file=sys.stderr)
         return 2
+    if args.serve:
+        from assessment.server import serve_report
+        try:
+            serve_report(html_path, args.host, args.port)
+        except OSError as exc:
+            print(f"[error] cannot serve report: {exc}", file=sys.stderr)
+            return 2
     return 0
 
 
